@@ -46,7 +46,7 @@ app.all("/twiml", (req, res) => {
       <Connect>
         <Stream url="${wsUrl}" track="both_tracks" />
       </Connect>
-      <Pause length="600"/>
+      <Pause length="10"/>
     </Response>
   `.trim();
 
