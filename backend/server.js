@@ -102,6 +102,12 @@ app.get(/.*/, (_req, res) => {
 // ---- Start HTTP server and attach the media bridge (WebSocket) ----
 const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
+
+// Log every WS upgrade attempt and path
+server.on("upgrade", (req, socket) => {
+  console.log(`[upgrade] ${req.method} ${req.url} origin=${req.headers.origin || "n/a"}`);
+});
+
 server.listen(PORT, () => {
   console.log(`Server running → http://localhost:${PORT}`);
   console.log(`[env] PUBLIC_BASE_URL=${PUBLIC_BASE_URL || "(unset)"}`);
