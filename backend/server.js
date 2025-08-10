@@ -36,23 +36,21 @@ const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 // ---- TwiML route: allow GET or POST (Twilio often uses GET by default) ----
 app.all("/twiml", (req, res) => {
-  const base = (PUBLIC_BASE_URL || "").replace(/\/+$/, ""); // strip trailing slash
-  if (!base) {
-    console.error("[/twiml] PUBLIC_BASE_URL is not set; cannot generate Stream URL");
-    return res.status(500).type("text/plain").send("Server misconfigured: PUBLIC_BASE_URL not set");
-  }
+  const base = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+  if (!base) return res.status(500).type("text/plain").send("PUBLIC_BASE_URL not set");
+  const wsUrl = base.replace(/^http/, "ws") + "/media-stream";
 
-  const wsUrl = base.replace(/^http/, "ws") + "/media-stream"; // ws(s) URL for our WS endpoint
-  console.log(`[/twiml] method=${req.method} ua=${req.headers["user-agent"] || "n/a"} wsUrl=${wsUrl}`);
-
+  // Keep the call open with a long Pause so the bidirectional stream can run
   const twiml = `
     <Response>
       <Connect>
         <Stream url="${wsUrl}" track="both_tracks" />
       </Connect>
+      <Pause length="600"/>
     </Response>
   `.trim();
 
+  console.log(`[/twiml] -> wsUrl=${wsUrl}`);
   res.type("text/xml").send(twiml);
 });
 
