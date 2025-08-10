@@ -4,66 +4,114 @@ const http = require("http");
 const express = require("express");
 const dotenv = require("dotenv");
 const twilio = require("twilio");
+
 dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-// --- Serve the frontend at "/" ---
+// ---- Basic request logger (simple and useful for Render logs) ----
+app.use((req, _res, next) => {
+  console.log(`[http] ${req.method} ${req.url}`);
+  next();
+});
+
+// ---- Serve the frontend at "/" ----
 const FRONTEND_DIR = path.join(__dirname, "..", "frontend");
 app.use(express.static(FRONTEND_DIR));
 app.get("/", (_req, res) => res.sendFile(path.join(FRONTEND_DIR, "index.html")));
 
-// --- Health check ---
+// ---- Health check ----
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// --- Twilio Client ---
-const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+// ---- Twilio Client ----
+const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER, PUBLIC_BASE_URL } = process.env;
+if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_NUMBER) {
+  console.warn("[env] Missing one or more Twilio vars: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER");
+}
+if (!PUBLIC_BASE_URL) {
+  console.warn("[env] Missing PUBLIC_BASE_URL (e.g., https://your-app.onrender.com)");
+}
+const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-// --- TwiML that connects the phone call to our WebSocket media stream ---
-app.post("/twiml", (req, res) => {
-  const wsUrl = (process.env.PUBLIC_BASE_URL || "").replace(/^http/, "ws") + "/media-stream";
+// ---- TwiML route: allow GET or POST (Twilio often uses GET by default) ----
+app.all("/twiml", (req, res) => {
+  const base = (PUBLIC_BASE_URL || "").replace(/\/+$/, ""); // strip trailing slash
+  if (!base) {
+    console.error("[/twiml] PUBLIC_BASE_URL is not set; cannot generate Stream URL");
+    return res.status(500).type("text/plain").send("Server misconfigured: PUBLIC_BASE_URL not set");
+  }
+
+  const wsUrl = base.replace(/^http/, "ws") + "/media-stream"; // ws(s) URL for our WS endpoint
+  console.log(`[/twiml] method=${req.method} ua=${req.headers["user-agent"] || "n/a"} wsUrl=${wsUrl}`);
+
   const twiml = `
     <Response>
       <Connect>
         <Stream url="${wsUrl}" track="both_tracks" />
       </Connect>
-    </Response>`;
-  res.type("text/xml").send(twiml.trim());
+    </Response>
+  `.trim();
+
+  res.type("text/xml").send(twiml);
 });
 
-// --- Outbound call trigger: now points to our /twiml ---
+// ---- Outbound call trigger: points Twilio to our /twiml URL ----
 app.post("/api/start-call", async (req, res) => {
   try {
-    const { name, phone } = req.body;
-    if (!name || !phone) return res.status(400).json({ error: "Missing name or phone" });
+    const { name, phone } = req.body || {};
+    if (!name || !phone) {
+      console.warn("[start-call] 400 missing params:", { name, phone });
+      return res.status(400).json({ error: "Missing name or phone" });
+    }
 
-    // You can pass metadata to your WS via Stream 'params' if needed (e.g., name)
-    const twimlUrl = (process.env.PUBLIC_BASE_URL || "") + "/twiml";
+    const base = (PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+    if (!base) {
+      console.error("[start-call] PUBLIC_BASE_URL not set");
+      return res.status(500).json({ error: "Server misconfigured: PUBLIC_BASE_URL not set" });
+    }
 
-    await client.calls.create({
+    const twimlUrl = `${base}/twiml`;
+    console.log(`[start-call] name="${name}" phone="${phone}" from=${TWILIO_NUMBER} twimlUrl=${twimlUrl}`);
+
+    const call = await client.calls.create({
       to: phone,
-      from: process.env.TWILIO_NUMBER, // E.164
-      url: twimlUrl, // Twilio will fetch this and connect the call to our WS stream
+      from: TWILIO_NUMBER,  // E.164, voice-enabled Twilio number
+      url: twimlUrl,
+      method: "GET"         // be explicit; our /twiml accepts GET or POST
     });
 
-    res.json({ ok: true });
+    console.log("[start-call] call created sid:", call.sid);
+    res.json({ ok: true, sid: call.sid });
   } catch (err) {
-    console.error("Error starting call:", err);
-    res.status(500).json({ error: err.message });
+    // Twilio errors often include more detail in 'err.code' and 'err.moreInfo'
+    console.error("[start-call] ERROR:", {
+      message: err.message,
+      code: err.code,
+      moreInfo: err.moreInfo
+    });
+    res.status(500).json({ error: err.message || "Call failed" });
   }
 });
 
-// --- Fallback to index.html ---
+// ---- Fallback: send index.html for any other path (Express 5-safe) ----
 app.get(/.*/, (_req, res) => {
   res.sendFile(path.join(FRONTEND_DIR, "index.html"));
 });
 
-// --- Start HTTP server and attach the media bridge (WebSocket) ---
+// ---- Start HTTP server and attach the media bridge (WebSocket) ----
 const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 server.listen(PORT, () => {
   console.log(`Server running → http://localhost:${PORT}`);
+  console.log(`[env] PUBLIC_BASE_URL=${PUBLIC_BASE_URL || "(unset)"}`);
 });
 
+// Attach the Twilio <-> OpenAI Realtime bridge
 require("./aiAgent").attach(server);
+
+// ---- Last-resort error handler (logs unhandled exceptions in routes) ----
+app.use((err, _req, res, _next) => {
+  console.error("[express] Unhandled error:", err);
+  res.status(500).json({ error: "Internal Server Error" });
+});
