@@ -1,0 +1,23 @@
+{
+  "name": "cf-udt-poc",
+  "version": "1.0.0",
+  "description": "POC for an AI-powered outbound call center agent for Crunch Fitness.",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "npx nodemon backend/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": "22.x"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "twilio": "^5.8.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
