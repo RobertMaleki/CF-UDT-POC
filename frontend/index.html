@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Crunch Fitness – Free Trial Pass</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; max-width: 520px; margin: 40px auto; padding: 0 16px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+    label { display:block; margin: 12px 0 4px; font-weight: 600; }
+    input[type="text"], input[type="tel"] { width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; }
+    button { margin-top: 16px; padding: 12px 16px; border: 0; border-radius: 10px; font-weight: 700; cursor: pointer; }
+    .primary { background: #7c3aed; color: white; }
+    .muted { color: #6b7280; font-size: 14px; }
+    .logo { font-weight: 900; font-size: 22px; letter-spacing: .5px; margin-bottom: 8px; }
+    .consent { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+    .footer { margin-top: 24px; font-size: 12px; color: #6b7280; text-align: center; }
+    .privacy { font-size: 12px; color: #374151; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">Crunch Fitness</div>
+    <h2>Get Your Free Trial Pass</h2>
+    <p class="muted">Enter your details and our agent will call you shortly.</p>
+
+    <form id="leadForm">
+      <label for="name">Name</label>
+      <input id="name" name="name" required placeholder="Alex Johnson" />
+
+      <label for="phone">Phone (E.164, e.g. +15551234567)</label>
+      <input id="phone" name="phone" required placeholder="+1XXXXXXXXXX" />
+
+      <div class="consent">
+        <input type="checkbox" id="consent" name="consent" required />
+        <label for="consent">I consent to receive a demo phone call.</label>
+      </div>
+
+      <button class="primary" type="submit">Claim My Trial Pass</button>
+
+      <p class="privacy">
+        Privacy Notice: Your information is collected solely for the purpose of this demo. 
+        It will not be sold, shared, or used for any other purpose.
+      </p>
+    </form>
+  </div>
+
+  <div class="footer">
+    &copy; 2025 Robert Maleki. All rights reserved.
+  </div>
+
+  <script>
+    const form = document.getElementById("leadForm");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = e.target.name.value.trim();
+      const phone = e.target.phone.value.trim();
+      const consent = e.target.consent.checked;
+
+      if (!consent) {
+        alert("You must consent to receive the demo phone call.");
+        return;
+      }
+
+      try {
+        const resp = await fetch("/api/start-call", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ name, phone })
+        });
+        if (!resp.ok) throw new Error("Request failed");
+        alert("We’ll call you shortly!");
+        form.reset();
+      } catch (err) {
+        alert("Something went wrong: " + err.message);
+      }
+    });
+  </script>
+</body>
+</html>
