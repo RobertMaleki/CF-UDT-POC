@@ -55,16 +55,15 @@ function pcm16ToMuLawB64(int16) {
 
 // ---- Test tone (8kHz PCM16 sine) ----
 function generateTonePCM16({ freq = 440, ms = 2000, sampleRate = 8000, amplitude = 6000 }) {
-  const totalSamples = Math.floor((ms / 1000) * sampleRate);
-  const pcm = new Int16Array(totalSamples);
-  for (let i = 0; i < totalSamples; i++) {
+  const total = Math.floor((ms / 1000) * sampleRate);
+  const pcm = new Int16Array(total);
+  for (let i = 0; i < total; i++) {
     const t = i / sampleRate;
     pcm[i] = Math.floor(amplitude * Math.sin(2 * Math.PI * freq * t));
   }
   return pcm;
 }
 
-// ---- Attach WS bridge to existing HTTP server ----
 function attach(server) {
   const wss = new WebSocket.Server({
     server,
@@ -78,7 +77,10 @@ function attach(server) {
   wss.on("connection", (twilioWS, req) => {
     console.log("[media] Twilio WS connected. UA:", req.headers["user-agent"] || "n/a");
 
-    // Connect to OpenAI Realtime (optional; tone test will work even if this fails)
+    // Capture Twilio streamSid from 'start' event
+    let streamSid = null;
+
+    // OpenAI WS (optional until tone verified)
     let openaiWS = null;
     let openaiReady = false;
     let responseInFlight = false;
@@ -120,10 +122,11 @@ function attach(server) {
             responseInFlight = false;
             console.error("[realtime] response.error:", msg.error || msg);
           } else if (msg.type === "response.audio.delta" && msg.audio) {
-            const pcmB64 = msg.audio; // base64 PCM16 at 8k
+            if (!streamSid) return;
+            const pcmB64 = msg.audio; // base64 PCM16 8k
             const pcm = new Int16Array(b64ToBuf(pcmB64).buffer, 0, b64ToBuf(pcmB64).length / 2);
             const muB64 = pcm16ToMuLawB64(pcm);
-            twilioWS.send(JSON.stringify({ event: "media", media: { payload: muB64 } }));
+            twilioWS.send(JSON.stringify({ event: "media", streamSid, media: { payload: muB64 } }));
           }
         } catch {
           // ignore non-JSON frames
@@ -134,7 +137,7 @@ function attach(server) {
       openaiWS.on("error", (err) => console.error("[realtime] OpenAI WS error:", err?.message || err));
     }
 
-    // Keepalive pings (some proxies like these)
+    // Keepalive pings
     const pingInterval = setInterval(() => {
       try { twilioWS.ping(); } catch {}
       try { openaiWS?.ping(); } catch {}
@@ -146,30 +149,30 @@ function attach(server) {
       try { msg = JSON.parse(raw.toString()); } catch { return; }
 
       switch (msg.event) {
-        case "start":
-          console.log("[twilio] stream start callSid:", msg.start?.callSid);
+        case "start": {
+          streamSid = msg.start?.streamSid;
+          console.log("[twilio] stream start callSid:", msg.start?.callSid, "streamSid:", streamSid);
 
-          // ---- TEST TONE: play 2s tone to confirm downlink works ----
+          // Send 2s tone to confirm downlink works
           try {
             const tone = generateTonePCM16({ freq: 440, ms: 2000, sampleRate: 8000 });
-            const muB64 = pcm16ToMuLawB64(tone);
-            // Slice into ~20ms frames (160 samples @ 8k)
-            const FRAME = 160;
+            const FRAME = 160; // ~20ms at 8kHz
             for (let i = 0; i < tone.length; i += FRAME) {
               const chunk = tone.subarray(i, i + FRAME);
-              const chunkMu = pcm16ToMuLawB64(chunk);
-              twilioWS.send(JSON.stringify({ event: "media", media: { payload: chunkMu } }));
+              const muB64 = pcm16ToMuLawB64(chunk);
+              twilioWS.send(JSON.stringify({ event: "media", streamSid, media: { payload: muB64 } }));
             }
             console.log("[twilio] sent 2s test tone");
           } catch (e) {
             console.error("[twilio] test tone error:", e?.message || e);
           }
           break;
+        }
 
         case "media": {
-          if (!openaiReady) break; // we can still do tone test without OpenAI
+          if (!openaiReady) break;
+          if (!streamSid) break;
 
-          // throttle commits to ~ every 200ms
           const now = Date.now();
           const shouldCommit = now - lastCommitAt > 200;
 
