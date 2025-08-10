@@ -34,23 +34,24 @@ if (!PUBLIC_BASE_URL) {
 }
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-// ---- TwiML route: allow GET or POST (Twilio often uses GET by default) ----
+// Allow GET or POST for Twilio fetch
 app.all("/twiml", (req, res) => {
   const base = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
   if (!base) return res.status(500).type("text/plain").send("PUBLIC_BASE_URL not set");
-  const wsUrl = base.replace(/^http/, "ws") + "/media-stream";
 
-  // Keep the call open with a long Pause so the bidirectional stream can run
+  const wsUrl = base.replace(/^http/, "ws") + "/media-stream";
+  console.log(`[/twiml] method=${req.method} ua=${req.headers["user-agent"] || "n/a"} wsUrl=${wsUrl}`);
+
+  // Use <Start><Stream track="both_tracks"> and keep the call open with <Pause>
   const twiml = `
     <Response>
-      <Connect>
-        <Stream url="${wsUrl}" track="both_tracks" />
-      </Connect>
-      <Pause length="10"/>
+      <Start>
+        <Stream url="${wsUrl}" track="both_tracks"/>
+      </Start>
+      <Pause length="600"/>
     </Response>
   `.trim();
 
-  console.log(`[/twiml] -> wsUrl=${wsUrl}`);
   res.type("text/xml").send(twiml);
 });
 
