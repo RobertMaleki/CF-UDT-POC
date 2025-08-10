@@ -135,25 +135,47 @@ function attach(server) {
 
     twilioWS.on("message", async (raw) => {
       let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
+    
+        if (!msg.event) {
+          console.log("[twilio] unknown frame", raw.toString().slice(0, 200));
+          return;
+        }
+
+        // Log every event type so we can see marks, dtmf, etc.
+        if (!["media", "start", "stop"].includes(msg.event)) {
+          console.log(`[twilio] event=${msg.event}`, JSON.stringify(msg).slice(0, 300));
+        }
 
       switch (msg.event) {
         case "start": {
           streamSid = msg.start?.streamSid;
           console.log("[twilio] stream start callSid:", msg.start?.callSid, "streamSid:", streamSid);
 
-          // ---- TEST TONE: 2s tone, μ-law, paced with sequence numbers ----
           try {
+            // Build a 2s, 8kHz PCM tone and convert entire thing to one μ-law buffer (single media message)
             const tonePcm = generateTonePCM16({ freq: 440, ms: 2000, sampleRate: 8000 });
-            const FRAME = 160; // ~20ms
-            const ulawFrames = [];
-            for (let i=0;i<tonePcm.length;i+=FRAME) {
-              ulawFrames.push(pcm16ToMuLawB64(tonePcm.subarray(i, i+FRAME)));
+            const ulawBuf = Buffer.alloc(tonePcm.length);
+            for (let i = 0; i < tonePcm.length; i++) {
+              // convert PCM16 sample to μ-law byte
+              ulawBuf[i] = pcm16ToMulaw(tonePcm[i]);
             }
-            await sendMuLawFramesPaced(twilioWS, streamSid, ulawFrames, 20);
-            console.log("[twilio] sent 2s test tone (paced + seq)");
-          } catch(e){ console.error("[twilio] test tone error:", e?.message||e); }
+            const ulawB64 = ulawBuf.toString("base64");
+
+            // Send ONE spec-minimal media message (per docs)
+            const mediaMsg = { event: "media", streamSid, media: { payload: ulawB64 } };
+            twilioWS.send(JSON.stringify(mediaMsg));
+            console.log("[twilio] sent 2s test tone (single media message, spec-minimal)");
+
+            // Send a MARK so Twilio will confirm when playback finishes
+            const markMsg = { event: "mark", streamSid, mark: { name: "tone_done" } };
+            twilioWS.send(JSON.stringify(markMsg));
+            console.log("[twilio] sent mark tone_done");
+          } catch (e) {
+            console.error("[twilio] test tone error:", e?.message || e);
+          }
           break;
         }
+
 
         case "media": {
           if (!openaiReady || !streamSid) break;
