@@ -53,83 +53,92 @@ function pcm16ToMuLawB64(int16) {
   return bufToB64(mu);
 }
 
+// ---- Test tone (8kHz PCM16 sine) ----
+function generateTonePCM16({ freq = 440, ms = 2000, sampleRate = 8000, amplitude = 6000 }) {
+  const totalSamples = Math.floor((ms / 1000) * sampleRate);
+  const pcm = new Int16Array(totalSamples);
+  for (let i = 0; i < totalSamples; i++) {
+    const t = i / sampleRate;
+    pcm[i] = Math.floor(amplitude * Math.sin(2 * Math.PI * freq * t));
+  }
+  return pcm;
+}
+
 // ---- Attach WS bridge to existing HTTP server ----
 function attach(server) {
-  const wss = new WebSocket.Server({ server, path: "/media-stream" });
+  const wss = new WebSocket.Server({
+    server,
+    path: "/media-stream",
+    clientTracking: true,
+    perMessageDeflate: false,
+    maxPayload: 1024 * 1024,
+  });
   console.log("[media] WebSocket server ready at /media-stream");
 
   wss.on("connection", (twilioWS, req) => {
     console.log("[media] Twilio WS connected. UA:", req.headers["user-agent"] || "n/a");
 
-    // Connect to OpenAI Realtime
-    const openaiWS = new WebSocket(OPENAI_REALTIME_URL, { headers: OPENAI_HEADERS });
-
-    // State flags
+    // Connect to OpenAI Realtime (optional; tone test will work even if this fails)
+    let openaiWS = null;
     let openaiReady = false;
     let responseInFlight = false;
     let lastCommitAt = 0;
 
-    // Keepalive ping (Render proxies sometimes like this)
-    const pingInterval = setInterval(() => {
-      try { twilioWS.ping(); } catch {}
-      try { openaiWS.ping(); } catch {}
-    }, 15000);
+    if (!process.env.OPENAI_API_KEY) {
+      console.warn("[realtime] OPENAI_API_KEY not set — skipping OpenAI bridge (tone test only)");
+    } else {
+      openaiWS = new WebSocket(OPENAI_REALTIME_URL, { headers: OPENAI_HEADERS });
 
-    // --- OpenAI events ---
-    openaiWS.on("open", () => {
-      console.log("[realtime] OpenAI WS open");
-      // Configure session: instructions + I/O formats at 8k PCM16
-      const sessionUpdate = {
-        type: "session.update",
-        session: {
-          instructions: SYSTEM_PROMPT,
-          voice: "alloy",
-          input_audio_format: { type: "pcm16", sample_rate_hz: 8000 },
-          output_audio_format: { type: "pcm16", sample_rate_hz: 8000 }
-        }
-      };
-      openaiWS.send(JSON.stringify(sessionUpdate));
-      openaiReady = true;
+      openaiWS.on("open", () => {
+        console.log("[realtime] OpenAI WS open");
+        const sessionUpdate = {
+          type: "session.update",
+          session: {
+            instructions: SYSTEM_PROMPT,
+            voice: "alloy",
+            input_audio_format: { type: "pcm16", sample_rate_hz: 8000 },
+            output_audio_format: { type: "pcm16", sample_rate_hz: 8000 },
+          },
+        };
+        openaiWS.send(JSON.stringify(sessionUpdate));
+        openaiReady = true;
 
-      // Send immediate greeting so the caller hears something right away
-      // (no need to wait for user speech)
-      console.log("[realtime] sending initial response.create (greeting)");
-      openaiWS.send(JSON.stringify({ type: "response.create" }));
-    });
+        console.log("[realtime] sending initial response.create (greeting)");
+        openaiWS.send(JSON.stringify({ type: "response.create" }));
+      });
 
-    openaiWS.on("message", (raw) => {
-      // Try parse JSON; some frames may be binary—handle gracefully
-      try {
-        const msg = JSON.parse(raw.toString());
-        if (msg.type) {
-          // Log key events/types for debugging
+      openaiWS.on("message", (raw) => {
+        try {
+          const msg = JSON.parse(raw.toString());
           if (msg.type === "response.created") {
             responseInFlight = true;
             console.log("[realtime] response.created");
-          }
-          if (msg.type === "response.completed") {
+          } else if (msg.type === "response.completed") {
             responseInFlight = false;
             console.log("[realtime] response.completed");
-          }
-          if (msg.type === "response.error") {
+          } else if (msg.type === "response.error") {
             responseInFlight = false;
             console.error("[realtime] response.error:", msg.error || msg);
-          }
-          if (msg.type === "response.audio.delta" && msg.audio) {
-            // msg.audio is base64 PCM16 (8k) per our session settings
-            const pcmB64 = msg.audio;
+          } else if (msg.type === "response.audio.delta" && msg.audio) {
+            const pcmB64 = msg.audio; // base64 PCM16 at 8k
             const pcm = new Int16Array(b64ToBuf(pcmB64).buffer, 0, b64ToBuf(pcmB64).length / 2);
             const muB64 = pcm16ToMuLawB64(pcm);
             twilioWS.send(JSON.stringify({ event: "media", media: { payload: muB64 } }));
           }
+        } catch {
+          // ignore non-JSON frames
         }
-      } catch {
-        // Non-JSON frames: could be raw audio or control; ignore
-      }
-    });
+      });
 
-    openaiWS.on("close", () => console.log("[realtime] OpenAI WS closed"));
-    openaiWS.on("error", (err) => console.error("[realtime] OpenAI WS error:", err?.message || err));
+      openaiWS.on("close", () => console.log("[realtime] OpenAI WS closed"));
+      openaiWS.on("error", (err) => console.error("[realtime] OpenAI WS error:", err?.message || err));
+    }
+
+    // Keepalive pings (some proxies like these)
+    const pingInterval = setInterval(() => {
+      try { twilioWS.ping(); } catch {}
+      try { openaiWS?.ping(); } catch {}
+    }, 15000);
 
     // --- Twilio events ---
     twilioWS.on("message", (raw) => {
@@ -139,40 +148,49 @@ function attach(server) {
       switch (msg.event) {
         case "start":
           console.log("[twilio] stream start callSid:", msg.start?.callSid);
+
+          // ---- TEST TONE: play 2s tone to confirm downlink works ----
+          try {
+            const tone = generateTonePCM16({ freq: 440, ms: 2000, sampleRate: 8000 });
+            const muB64 = pcm16ToMuLawB64(tone);
+            // Slice into ~20ms frames (160 samples @ 8k)
+            const FRAME = 160;
+            for (let i = 0; i < tone.length; i += FRAME) {
+              const chunk = tone.subarray(i, i + FRAME);
+              const chunkMu = pcm16ToMuLawB64(chunk);
+              twilioWS.send(JSON.stringify({ event: "media", media: { payload: chunkMu } }));
+            }
+            console.log("[twilio] sent 2s test tone");
+          } catch (e) {
+            console.error("[twilio] test tone error:", e?.message || e);
+          }
           break;
 
         case "media": {
+          if (!openaiReady) break; // we can still do tone test without OpenAI
+
           // throttle commits to ~ every 200ms
           const now = Date.now();
           const shouldCommit = now - lastCommitAt > 200;
 
-          // Forward caller audio to OpenAI as 8k PCM16
-          if (openaiReady) {
-            const pcm16 = muLawB64ToPCM16(msg.media.payload);
-            openaiWS.send(JSON.stringify({
-              type: "input_audio_buffer.append",
-              audio: bufToB64(Buffer.from(pcm16.buffer))
-            }));
+          const pcm16 = muLawB64ToPCM16(msg.media.payload);
+          openaiWS.send(JSON.stringify({
+            type: "input_audio_buffer.append",
+            audio: bufToB64(Buffer.from(pcm16.buffer)),
+          }));
 
-            if (shouldCommit && !responseInFlight) {
-              lastCommitAt = now;
-              // Commit the input buffer and ask for a response turn
-              openaiWS.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-              openaiWS.send(JSON.stringify({ type: "response.create" }));
-              // Mark that we’re expecting audio back
-              responseInFlight = true;
-            }
+          if (shouldCommit && !responseInFlight) {
+            lastCommitAt = now;
+            openaiWS.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+            openaiWS.send(JSON.stringify({ type: "response.create" }));
+            responseInFlight = true;
           }
           break;
         }
 
-        case "mark":
-          // optional markers; ignore
-          break;
-
         case "stop":
           console.log("[twilio] stream stop");
-          try { openaiWS.close(); } catch {}
+          try { openaiWS?.close(); } catch {}
           break;
       }
     });
@@ -180,9 +198,8 @@ function attach(server) {
     twilioWS.on("close", () => {
       console.log("[twilio] WS closed");
       clearInterval(pingInterval);
-      try { openaiWS.close(); } catch {}
+      try { openaiWS?.close(); } catch {}
     });
-
     twilioWS.on("error", (err) => console.error("[twilio] WS error:", err?.message || err));
   });
 }
