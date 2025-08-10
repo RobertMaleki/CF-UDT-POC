@@ -45,6 +45,7 @@ app.all("/twiml", (req, res) => {
   // Use <Start><Stream track="both_tracks"> and keep the call open with <Pause>
   const twiml = `
     <Response>
+      <Say voice="alice">Thanks for taking our demo call. Connecting you now.</Say>
       <Start>
         <Stream url="${wsUrl}" track="both_tracks"/>
       </Start>
