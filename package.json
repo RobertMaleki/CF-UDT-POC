@@ -15,7 +15,8 @@
   "dependencies": {
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
-    "twilio": "^5.8.0"
+    "twilio": "^5.8.0",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
