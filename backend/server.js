@@ -42,19 +42,19 @@ app.all("/twiml", (req, res) => {
   const wsUrl = base.replace(/^http/, "ws") + "/media-stream";
   console.log(`[/twiml] method=${req.method} ua=${req.headers["user-agent"] || "n/a"} wsUrl=${wsUrl}`);
 
-  // Use <Start><Stream track="both_tracks"> and keep the call open with <Pause>
+  // Bidirectional stream: <Connect><Stream>. Keep a short <Say> BEFORE connect.
   const twiml = `
     <Response>
       <Say voice="alice">Thanks for taking our demo call. Connecting you now.</Say>
-      <Start>
-        <Stream url="${wsUrl}" track="both_tracks"/>
-      </Start>
-      <Pause length="600"/>
+      <Connect>
+        <Stream url="${wsUrl}" />
+      </Connect>
     </Response>
   `.trim();
 
   res.type("text/xml").send(twiml);
 });
+
 
 // ---- Outbound call trigger: points Twilio to our /twiml URL ----
 app.post("/api/start-call", async (req, res) => {
