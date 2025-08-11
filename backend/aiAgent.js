@@ -96,6 +96,17 @@ function upsampleTo16k(pcm8k) {
   return out;
 }
 
+function downsample16kTo8k(pcm16k) {
+  // Simple 2:1 downsample (average pairs). Good enough for phone audio.
+  const out = new Int16Array(Math.floor(pcm16k.length / 2));
+  for (let i = 0, j = 0; j < out.length; i += 2, j++) {
+    const a = pcm16k[i];
+    const b = pcm16k[i + 1] ?? a;
+    out[j] = (a + b) >> 1;
+  }
+  return out;
+}
+
 function generateTonePCM16({ freq = 440, ms = 2000, sampleRate = 8000, amplitude = 6000 }) {
   const total = Math.floor((ms / 1000) * sampleRate);
   const pcm = new Int16Array(total);
@@ -222,12 +233,28 @@ function attach(server) {
         else if (msg.type === "response.completed") { responseInFlight = false; }
         else if (msg.type === "response.error") { responseInFlight = false; }
 
+        /*
         // Stream model audio back to Twilio (μ-law paced at 8k)
         if (msg.type === "response.audio.delta" && msg.audio && streamSid) {
           const buf = Buffer.from(msg.audio, "base64");
           const pcm = new Int16Array(buf.buffer, buf.byteOffset, buf.length / 2);
           await sendPCM16AsPacedUlawFrames(twilioWS, streamSid, pcm, 160, 20);
         }
+        */
+
+        if (msg.type === "response.audio.delta" && msg.audio && streamSid) {
+          const buf = Buffer.from(msg.audio, "base64");
+          const pcm16k = new Int16Array(buf.buffer, buf.byteOffset, buf.length / 2);
+
+          // ↓↓↓ critical fix: convert 16k → 8k for Twilio
+          const pcm8k = downsample16kTo8k(pcm16k);
+
+          // Optional: small gain boost for intelligibility (keep under 1.5x to avoid clipping)
+          // for (let i = 0; i < pcm8k.length; i++) pcm8k[i] = Math.max(-32768, Math.min(32767, (pcm8k[i] * 1.2)|0));
+
+          await sendPCM16AsPacedUlawFrames(twilioWS, streamSid, pcm8k, 160, 20);
+        }
+
       });
     }
 
