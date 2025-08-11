@@ -212,11 +212,13 @@ function attach(server) {
 
               openaiWS.send(JSON.stringify({
                 type: "input_audio_buffer.append",
-                audio: b64
+                audio: b64,
+                audio_format: "pcm16",
+                sample_rate_hz: 8000
               }));
 
               // Tiny delay so the server ingests the append before commit
-              await sleep(60);
+              await sleep(120);
 
               console.log("[realtime] committing input buffer");
               openaiWS.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
@@ -233,7 +235,7 @@ function attach(server) {
                     responseInFlight = true;
                     console.log("[realtime] requested first spoken response");
                   }
-                }, 120);
+                }, 150);
               }
             }
           }
