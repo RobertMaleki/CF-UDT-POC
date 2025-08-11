@@ -3,8 +3,9 @@ const WebSocket = require("ws");
 const https = require("https");
 
 // ======================= Config =======================
+const OPENAI_REALTIME_MODEL = "gpt-4o-realtime-preview-2025-06-03";
 const OPENAI_REALTIME_URL =
-  "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2025-06-03";
+  `wss://api.openai.com/v1/realtime?model=${OPENAI_REALTIME_MODEL}`;
 const OPENAI_HEADERS = {
   Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
   "OpenAI-Beta": "realtime=v1",
@@ -84,7 +85,7 @@ function pcm16ToMuLawB64(int16) {
 }
 
 function upsampleTo16k(pcm8k) {
-  // Simple 2x upsample: linear interpolation
+  // Simple 2x upsample: linear interpolation for intelligible speech
   const out = new Int16Array(pcm8k.length * 2);
   for (let i = 0, j = 0; i < pcm8k.length; i++, j += 2) {
     const a = pcm8k[i];
@@ -122,6 +123,17 @@ async function sendPCM16AsPacedUlawFrames(twilioWS, streamSid, pcm16, frameSampl
   }
 }
 
+// Binary append helper (PCM16 LE @ 16 kHz, mono)
+function sendBinaryPcm16ToOpenAI(ws, pcm16le) {
+  const header = Buffer.from("Content-Type: audio/pcm;rate=16000;channels=1\r\n\r\n");
+  const payload = Buffer.allocUnsafe(pcm16le.length * 2);
+  for (let i = 0; i < pcm16le.length; i++) payload.writeInt16LE(pcm16le[i], i * 2);
+  const frame = Buffer.concat([header, payload]);
+  return new Promise((resolve, reject) => {
+    ws.send(frame, { binary: true }, (err) => (err ? reject(err) : resolve()));
+  });
+}
+
 // =================== Bridge attach =====================
 function attach(server) {
   const wss = new WebSocket.Server({
@@ -133,6 +145,7 @@ function attach(server) {
   });
   console.log("[media] WebSocket server ready at /media-stream");
 
+  // Make the handler async so we can await append -> commit safely
   wss.on("connection", async (twilioWS, req) => {
     console.log("[media] Twilio WS connected. UA:", req.headers["user-agent"] || "n/a");
 
@@ -144,7 +157,7 @@ function attach(server) {
     let responseInFlight = false;
     let firstResponseRequested = false;
 
-    // Inbound batching as PCM16@16k (200ms per append)
+    // Inbound batching as PCM16@16k — use 3200 (200ms) or bump to 6400 (400ms) if you want fewer commits
     const APPEND_SAMPLES_16K = 3200; // 200ms @ 16k
     let pcm16kBatch = new Int16Array(0);
 
@@ -180,7 +193,6 @@ function attach(server) {
           session: {
             instructions: SYSTEM_PROMPT,
             voice: "alloy",
-            // We append PCM16 LE; many stacks assume 16k by default
             input_audio_format: "pcm16",
             output_audio_format: "pcm16",
           },
@@ -208,6 +220,7 @@ function attach(server) {
         else if (msg.type === "response.completed") { responseInFlight = false; }
         else if (msg.type === "response.error") { responseInFlight = false; }
 
+        // Stream model audio back to Twilio (μ-law paced at 8k)
         if (msg.type === "response.audio.delta" && msg.audio && streamSid) {
           const buf = Buffer.from(msg.audio, "base64");
           const pcm = new Int16Array(buf.buffer, buf.byteOffset, buf.length / 2);
@@ -254,7 +267,7 @@ function attach(server) {
             console.log("[twilio] inbound media frames:", twilioWS._frameCount);
           }
 
-          // If OpenAI isn't ready, just skip (no echo mode)
+          // If OpenAI isn't ready/open, just skip (no echo mode)
           if (!(openaiReady && openaiWS?.readyState === WebSocket.OPEN)) {
             return;
           }
@@ -279,51 +292,22 @@ function attach(server) {
             pcm16kBatch = new Int16Array(remain.length);
             pcm16kBatch.set(remain, 0);
 
-            const b64 = int16ToBase64LE(slice);
-            console.log("[realtime] appending PCM16@16k samples:", slice.length, "(~200ms)");
+            console.log("[realtime] appending PCM16@16k (binary):", slice.length, "samples (~200ms)");
+            await sendBinaryPcm16ToOpenAI(openaiWS, slice);
 
-            /*
-            openaiWS.send(JSON.stringify({
-              type: "input_audio_buffer.append",
-              audio: b64
-            }));
-
-            // brief ingest delay
-            await sleep(100);
+            // tiny ingest cushion; do not remove
+            await sleep(80);
 
             console.log("[realtime] committing input buffer");
             openaiWS.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-            */
-
-            // Build a binary WS frame with a small header + 16k PCM16LE payload
-            function sendBinaryPcm16ToOpenAI(ws, pcm16le) {
-              // pcm16le is Int16Array at 16 kHz
-              const header = Buffer.from("Content-Type: audio/pcm;rate=16000\r\n\r\n");
-              const payload = Buffer.allocUnsafe(pcm16le.length * 2);
-              for (let i = 0; i < pcm16le.length; i++) payload.writeInt16LE(pcm16le[i], i * 2);
-              const frame = Buffer.concat([header, payload]);
-              ws.send(frame, { binary: true });
-            }
 
             if (!firstResponseRequested) {
               setTimeout(() => {
                 if (openaiWS.readyState === WebSocket.OPEN && !responseInFlight) {
-
-                  /*
                   openaiWS.send(JSON.stringify({
                     type: "response.create",
                     response: { modalities: ["audio", "text"] }
                   }));
-                  */
-
-                  console.log("[realtime] appending PCM16@16k (binary):", slice.length, "samples (~200ms)");
-                  sendBinaryPcm16ToOpenAI(openaiWS, slice);
-
-                  // short ingest delay, then commit
-                  //await sleep(100);
-                  console.log("[realtime] committing input buffer");
-                  openaiWS.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-
                   firstResponseRequested = true;
                   responseInFlight = true;
                   console.log("[realtime] requested first spoken response");
