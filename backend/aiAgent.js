@@ -20,7 +20,7 @@ Mission: book a time for the caller to come in and redeem a free trial pass this
 Keep responses under ~10 seconds and avoid long monologues.
 `;
 
-const ECHO_TEST = process.env.ECHO_TEST === "true"; // optional toggle
+const ECHO_TEST = process.env.ECHO_TEST === "false"; // optional toggle
 
 // ============ μ-law <-> PCM16 helpers ============
 const BIAS = 0x84, SIGN_BIT = 0x80, QUANT_MASK = 0x0F, SEG_MASK = 0x70;
