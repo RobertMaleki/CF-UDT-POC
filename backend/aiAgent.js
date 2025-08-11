@@ -26,15 +26,17 @@ function mulawToPcm16(uVal){uVal=~uVal&0xff;let t=((uVal&QUANT_MASK)<<3)+BIAS;t<
 function pcm16ToMulaw(s){let sign=(s>>8)&0x80;if(sign!==0)s=-s;if(s>32635)s=32635;s+=BIAS;let e=7;for(let m=0x4000;(s&m)===0&&e>0;e--,m>>=1){}const man=(s>>((e===0)?4:(e+3)))&0x0F;return(~(sign|(e<<4)|man))&0xff;}
 const b64ToBuf=(b)=>Buffer.from(b,"base64");
 const bufToB64=(buf)=>Buffer.from(buf).toString("base64");
+
+// Twilio μ-law (8 kHz) -> PCM16 (for outbound to Twilio we still convert PCM16 -> μ-law)
 function muLawB64ToPCM16(b64){
-  const u8 = b64ToBuf(b64);
-  const pcm = new Int16Array(u8.length);
-  for (let i=0;i<u8.length;i++) pcm[i] = mulawToPcm16(u8[i]);
+  const u8=b64ToBuf(b64);
+  const pcm=new Int16Array(u8.length);
+  for(let i=0;i<u8.length;i++) pcm[i]=mulawToPcm16(u8[i]);
   return pcm;
 }
 function pcm16ToMuLawB64(int16){
-  const mu = Buffer.alloc(int16.length);
-  for (let i=0;i<int16.length;i++) mu[i] = pcm16ToMulaw(int16[i]);
+  const mu=Buffer.alloc(int16.length);
+  for(let i=0;i<int16.length;i++) mu[i]=pcm16ToMulaw(int16[i]);
   return mu.toString("base64");
 }
 
@@ -76,12 +78,12 @@ function attach(server){
     let openaiWS=null;
     let openaiReady=false;
     let responseInFlight=false;
-
-    // Inbound audio accounting
-    let lastCommitAt=0;
-    let appendedSinceLastCommit=false;
-    let appendedMsSinceLastCommit=0; // accumulate ~20ms per Twilio frame
     let firstResponseRequested=false;
+
+    // μ-law accumulation buffer for appends (≥100ms per append)
+    let ulawChunks=[];          // array<Buffer>
+    let ulawBytesAccum=0;       // total bytes in current batch
+    const APPEND_THRESHOLD=800; // 100 ms @ 8 kHz μ-law (1 byte per sample)
 
     if(!process.env.OPENAI_API_KEY){
       console.warn("[realtime] OPENAI_API_KEY not set — skipping OpenAI bridge (tone test only)");
@@ -90,20 +92,20 @@ function attach(server){
 
       openaiWS.on("open",()=>{
         console.log("[realtime] OpenAI WS open");
-        // Use PCM16 for input/output (we convert Twilio μ-law to PCM16)
+        // IMPORTANT: declare μ-law input and PCM16 output
         openaiWS.send(JSON.stringify({
           type:"session.update",
           session:{
             instructions:SYSTEM_PROMPT,
             voice:"alloy",
-            input_audio_format:"pcm16",
+            input_audio_format:"g711_ulaw",
             output_audio_format:"pcm16"
           }
         }));
         openaiReady=true;
       });
 
-      // Log all OpenAI messages; stream audio deltas back to Twilio
+      // Log all messages; stream audio deltas back to Twilio (paced)
       openaiWS.on("message", async (raw)=>{
         let msg; try{ msg=JSON.parse(raw.toString()); }catch{ return; }
 
@@ -159,37 +161,36 @@ function attach(server){
             console.log("[twilio] inbound media frames:", twilioWS._frameCount);
           }
 
-          // Forward caller audio to OpenAI: μ-law (Twilio) → PCM16 → append
+          // Accumulate μ-law bytes (base64 -> Buffer)
           if(openaiReady && openaiWS?.readyState===WebSocket.OPEN){
-            // Each Twilio media frame is ~20ms @ 8k
-            const pcm16 = muLawB64ToPCM16(msg.media.payload);
-            // NOTE: Buffer.from(pcm16.buffer) uses the underlying ArrayBuffer directly
-            openaiWS.send(JSON.stringify({
-              type:"input_audio_buffer.append",
-              audio: bufToB64(Buffer.from(pcm16.buffer))
-            }));
-            appendedSinceLastCommit = true;
-            appendedMsSinceLastCommit += 20;
+            const chunk = b64ToBuf(msg.media.payload); // μ-law bytes
+            ulawChunks.push(chunk);
+            ulawBytesAccum += chunk.length;
 
-            const now = Date.now();
-            const enoughMs = appendedMsSinceLastCommit >= 200; // ≥100ms required; use 200ms for safety
-            const timeOk = (now - lastCommitAt) >= 200;
+            // Once we have >=100ms of audio, append+commit in one go
+            if(ulawBytesAccum >= APPEND_THRESHOLD && !responseInFlight){
+              const combined = Buffer.concat(ulawChunks, ulawBytesAccum);
+              ulawChunks = [];
+              ulawBytesAccum = 0;
 
-            if(enoughMs && timeOk && !responseInFlight){
-              lastCommitAt = now;
-              appendedMsSinceLastCommit = 0;
+              // Append one ≥100ms chunk
+              openaiWS.send(JSON.stringify({
+                type:"input_audio_buffer.append",
+                audio: combined.toString("base64") // μ-law base64
+              }));
 
+              // Commit, then (if first time) ask the model to speak
               openaiWS.send(JSON.stringify({ type:"input_audio_buffer.commit" }));
 
-              // Trigger model speech only after first successful commit
-              const shouldAskFirst = !firstResponseRequested;
-              const responsePayload = shouldAskFirst
-                ? { modalities:["audio","text"], instructions:"Hello! This is Crunch Fitness. I’ve got a free trial pass for you. What time works best this week to stop by?" }
-                : { modalities:["audio","text"] };
-
-              openaiWS.send(JSON.stringify({ type:"response.create", response: responsePayload }));
-              firstResponseRequested = true;
-              responseInFlight = true;
+              if(!firstResponseRequested){
+                openaiWS.send(JSON.stringify({
+                  type:"response.create",
+                  response:{ modalities:["audio","text"] }
+                }));
+                firstResponseRequested = true;
+                responseInFlight = true;
+                console.log("[realtime] requested first spoken response");
+              }
             }
           }
           break;
