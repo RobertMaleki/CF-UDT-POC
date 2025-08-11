@@ -1,12 +1,14 @@
 // backend/aiAgent.js
 const WebSocket = require("ws");
+const https = require("https");
 
-// ==== OpenAI Realtime WS config ====
+// ======================= Config =======================
 const OPENAI_REALTIME_URL =
   "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview";
 const OPENAI_HEADERS = {
   Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
   "OpenAI-Beta": "realtime=v1",
+  ...(process.env.OPENAI_ORG ? { "OpenAI-Organization": process.env.OPENAI_ORG } : {}),
 };
 
 const SYSTEM_PROMPT = `
@@ -20,9 +22,35 @@ Mission: book a time for the caller to come in and redeem a free trial pass this
 Keep responses under ~10 seconds and avoid long monologues.
 `;
 
-//const ECHO_TEST = process.env.ECHO_TEST === "false"; // optional toggle
+// ================= Diagnostics helpers =================
+function probeOpenAIModels(apiKey) {
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        method: "GET",
+        host: "api.openai.com",
+        path: "/v1/models",
+        headers: { Authorization: `Bearer ${apiKey}` },
+        timeout: 8000,
+      },
+      (res) => {
+        let body = "";
+        res.on("data", (c) => (body += c.toString()));
+        res.on("end", () => {
+          console.log("[diag] GET /v1/models ->", res.statusCode, body.slice(0, 200));
+          resolve({ status: res.statusCode, body });
+        });
+      }
+    );
+    req.on("error", (e) => {
+      console.error("[diag] models probe error:", e.message);
+      resolve(null);
+    });
+    req.end();
+  });
+}
 
-// ============ μ-law <-> PCM16 helpers ============
+// =================== Audio helpers =====================
 const BIAS = 0x84, SIGN_BIT = 0x80, QUANT_MASK = 0x0F, SEG_MASK = 0x70;
 
 function mulawToPcm16(uVal) {
@@ -55,7 +83,18 @@ function pcm16ToMuLawB64(int16) {
   return mu.toString("base64");
 }
 
-// ============ Tone + pacing ============
+function upsampleTo16k(pcm8k) {
+  // Simple 2x upsample: linear interpolation
+  const out = new Int16Array(pcm8k.length * 2);
+  for (let i = 0, j = 0; i < pcm8k.length; i++, j += 2) {
+    const a = pcm8k[i];
+    const b = (i + 1 < pcm8k.length) ? pcm8k[i + 1] : a;
+    out[j] = a;
+    out[j + 1] = (a + b) >> 1;
+  }
+  return out;
+}
+
 function generateTonePCM16({ freq = 440, ms = 2000, sampleRate = 8000, amplitude = 6000 }) {
   const total = Math.floor((ms / 1000) * sampleRate);
   const pcm = new Int16Array(total);
@@ -65,6 +104,7 @@ function generateTonePCM16({ freq = 440, ms = 2000, sampleRate = 8000, amplitude
   }
   return pcm;
 }
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Send PCM16 (8kHz) to Twilio as paced μ-law frames (~20ms each). */
@@ -82,26 +122,7 @@ async function sendPCM16AsPacedUlawFrames(twilioWS, streamSid, pcm16, frameSampl
   }
 }
 
-// === 8Khz to 16KHz upsampling helper
-function upsampleTo16k(pcm8k) {
-  // Simple 2x upsample: duplicate/interpolate samples
-  const out = new Int16Array(pcm8k.length * 2);
-  for (let i = 0, j = 0; i < pcm8k.length; i++, j += 2) {
-    const a = pcm8k[i];
-    const b = (i + 1 < pcm8k.length) ? pcm8k[i + 1] : a;
-    out[j] = a;
-    out[j + 1] = (a + b) >> 1; // linear interp between a and next
-  }
-  return out;
-}
-function int16ToBase64LE(int16) {
-  const buf = Buffer.allocUnsafe(int16.length * 2);
-  for (let i = 0; i < int16.length; i++) buf.writeInt16LE(int16[i], i * 2);
-  return buf.toString("base64");
-}
-
-
-// ============ Attach Twilio <-> OpenAI bridge ============
+// =================== Bridge attach =====================
 function attach(server) {
   const wss = new WebSocket.Server({
     server,
@@ -112,7 +133,7 @@ function attach(server) {
   });
   console.log("[media] WebSocket server ready at /media-stream");
 
-  wss.on("connection", (twilioWS, req) => {
+  wss.on("connection", async (twilioWS, req) => {
     console.log("[media] Twilio WS connected. UA:", req.headers["user-agent"] || "n/a");
 
     let streamSid = null;
@@ -123,44 +144,43 @@ function attach(server) {
     let responseInFlight = false;
     let firstResponseRequested = false;
 
-    // PCM16 accumulation for ≥200ms appends (200ms = 1600 samples @ 8k)
-    const SAMPLE_RATE = 8000;
-    const APPEND_SAMPLES = 1600; // 200ms
-    let pcmBatch = new Int16Array(0);
+    // Inbound batching as PCM16@16k (200ms per append)
+    const APPEND_SAMPLES_16K = 3200; // 200ms @ 16k
+    let pcm16kBatch = new Int16Array(0);
 
     if (!process.env.OPENAI_API_KEY) {
-      console.warn("[realtime] OPENAI_API_KEY not set — skipping OpenAI bridge (tone test only)");
+      console.warn("[realtime] OPENAI_API_KEY not set — skipping OpenAI bridge");
     } else {
-      const url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview";
-      console.log("[realtime] connecting to:", url);
+      console.log("[realtime] connecting to:", OPENAI_REALTIME_URL);
+      await probeOpenAIModels(process.env.OPENAI_API_KEY);
 
-        openaiWS = new WebSocket(url, {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            "OpenAI-Beta": "realtime=v1",
-          },
-          handshakeTimeout: 15000,
-          perMessageDeflate: false,
-        });
+      openaiWS = new WebSocket(OPENAI_REALTIME_URL, {
+        headers: OPENAI_HEADERS,
+        handshakeTimeout: 15000,
+        perMessageDeflate: false,
+      });
 
-          // log why the handshake failed (status, headers, body snippet)
-          openaiWS.on("unexpected-response", (req, res) => {
-            let body = "";
-            res.on("data", (c) => { body += c.toString(); if (body.length > 500) body = body.slice(0, 500) + "..."; });
-            res.on("end", () => {
-              console.error("[realtime] unexpected-response",
-                { status: res.statusCode, headers: res.headers, body });
-            });
+      openaiWS.on("unexpected-response", (req2, res) => {
+        let body = "";
+        res.on("data", (c) => (body += c.toString()));
+        res.on("end", () => {
+          console.error("[realtime] unexpected-response", {
+            status: res.statusCode,
+            headers: res.headers,
+            body: body.slice(0, 500),
           });
+        });
+      });
 
       openaiWS.on("open", () => {
         console.log("[realtime] OpenAI WS open");
-        // Expect PCM16 input/output; we convert Twilio μ-law to PCM16 before appending
+        openaiReady = true;
         openaiWS.send(JSON.stringify({
           type: "session.update",
           session: {
             instructions: SYSTEM_PROMPT,
             voice: "alloy",
+            // We append PCM16 LE; many stacks assume 16k by default
             input_audio_format: "pcm16",
             output_audio_format: "pcm16",
           },
@@ -176,9 +196,9 @@ function attach(server) {
         console.error("[realtime] WS error:", err?.message || err);
       });
 
-      // Log everything; stream audio deltas back to Twilio (paced)
       openaiWS.on("message", async (raw) => {
-        let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
+        let msg;
+        try { msg = JSON.parse(raw.toString()); } catch { return; }
 
         if (msg.type !== "response.audio.delta") {
           console.log("[realtime] evt:", msg.type, (msg.error ? JSON.stringify(msg.error) : ""));
@@ -218,7 +238,7 @@ function attach(server) {
 
           // 2s tone (paced) to prove downlink
           try {
-            const tone = generateTonePCM16({ freq: 440, ms: 2000, sampleRate: SAMPLE_RATE });
+            const tone = generateTonePCM16({ freq: 440, ms: 2000, sampleRate: 8000 });
             await sendPCM16AsPacedUlawFrames(twilioWS, streamSid, tone, 160, 20);
             console.log("[twilio] sent 2s test tone (paced minimal frames)");
           } catch (e) {
@@ -233,73 +253,61 @@ function attach(server) {
           if (++twilioWS._frameCount % 25 === 0) {
             console.log("[twilio] inbound media frames:", twilioWS._frameCount);
           }
-          /*
-          // ---- Echo fallback (only if OpenAI not ready or ECHO_TEST=true)
-          if (ECHO_TEST || !openaiReady || openaiWS?.readyState !== WebSocket.OPEN) {
-            // loop caller audio back ~real-time
-            const ulaw = Buffer.from(msg.media.payload, "base64");
-            // Convert to PCM16 to avoid transcoding drift, then right back to μ-law paced
-            const pcm = new Int16Array(ulaw.length);
-            for (let i = 0; i < ulaw.length; i++) pcm[i] = mulawToPcm16(ulaw[i]);
-            await sendPCM16AsPacedUlawFrames(twilioWS, streamSid, pcm, 160, 20);
-            return; // skip OpenAI path on this frame
+
+          // If OpenAI isn't ready, just skip (no echo mode)
+          if (!(openaiReady && openaiWS?.readyState === WebSocket.OPEN)) {
+            return;
           }
-          */
 
+          // Twilio frame: μ-law 8k (~20ms, 160 bytes) -> PCM16 8k
+          const ulaw = Buffer.from(msg.media.payload, "base64");
+          const pcm8k = new Int16Array(ulaw.length);
+          for (let i = 0; i < ulaw.length; i++) pcm8k[i] = mulawToPcm16(ulaw[i]);
 
-          // === inside twilioWS.on("message") -> case "media":
-          if (openaiReady && openaiWS?.readyState === WebSocket.OPEN) {
-            // Twilio frame: μ-law 8k (~20ms, 160 bytes)
-            const ulaw = Buffer.from(msg.media.payload, "base64");
-            const pcm8k = new Int16Array(ulaw.length);
-            for (let i = 0; i < ulaw.length; i++) pcm8k[i] = mulawToPcm16(ulaw[i]);
+          // Upsample 8k -> 16k
+          const pcm16k = upsampleTo16k(pcm8k);
 
-            // Upsample 8k -> 16k
-            const pcm16k = upsampleTo16k(pcm8k);
+          // Accumulate to ~200ms at 16k => 3200 samples
+          const merged = new Int16Array(pcm16kBatch.length + pcm16k.length);
+          merged.set(pcm16kBatch, 0);
+          merged.set(pcm16k, pcm16kBatch.length);
+          pcm16kBatch = merged;
 
-            // Accumulate to ~200ms at 16k => 3200 samples
-            if (!twilioWS._pcm16kBatch) twilioWS._pcm16kBatch = new Int16Array(0);
-            const merged = new Int16Array(twilioWS._pcm16kBatch.length + pcm16k.length);
-            merged.set(twilioWS._pcm16kBatch, 0);
-            merged.set(pcm16k, twilioWS._pcm16kBatch.length);
-            twilioWS._pcm16kBatch = merged;
+          if (pcm16kBatch.length >= APPEND_SAMPLES_16K && !responseInFlight) {
+            const slice = pcm16kBatch.subarray(0, APPEND_SAMPLES_16K);
+            const remain = pcm16kBatch.subarray(APPEND_SAMPLES_16K);
+            pcm16kBatch = new Int16Array(remain.length);
+            pcm16kBatch.set(remain, 0);
 
-            const APPEND_SAMPLES_16K = 3200; // ~200ms @ 16k
-            if (twilioWS._pcm16kBatch.length >= APPEND_SAMPLES_16K && !responseInFlight) {
-              const slice = twilioWS._pcm16kBatch.subarray(0, APPEND_SAMPLES_16K);
-              const remain = twilioWS._pcm16kBatch.subarray(APPEND_SAMPLES_16K);
-              twilioWS._pcm16kBatch = new Int16Array(remain.length);
-              twilioWS._pcm16kBatch.set(remain, 0);
+            const b64 = int16ToBase64LE(slice);
+            console.log("[realtime] appending PCM16@16k samples:", slice.length, "(~200ms)");
 
-              const b64 = int16ToBase64LE(slice);
-              console.log("[realtime] appending PCM16@16k samples:", slice.length, "(~200ms)");
+            openaiWS.send(JSON.stringify({
+              type: "input_audio_buffer.append",
+              audio: b64
+            }));
 
-              openaiWS.send(JSON.stringify({
-                type: "input_audio_buffer.append",
-                audio: b64 // single base64 string of 16k PCM16 LE
-              }));
+            // brief ingest delay
+            await sleep(100);
 
-              // brief ingest delay
-              await new Promise(r => setTimeout(r, 100));
+            console.log("[realtime] committing input buffer");
+            openaiWS.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
 
-              console.log("[realtime] committing input buffer");
-              openaiWS.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-
-              if (!firstResponseRequested) {
-                setTimeout(() => {
-                  if (openaiWS.readyState === WebSocket.OPEN && !responseInFlight) {
-                    openaiWS.send(JSON.stringify({
-                      type: "response.create",
-                      response: { modalities: ["audio", "text"] }
-                    }));
-                    firstResponseRequested = true;
-                    responseInFlight = true;
-                    console.log("[realtime] requested first spoken response");
-                  }
-                }, 150);
-              }
+            if (!firstResponseRequested) {
+              setTimeout(() => {
+                if (openaiWS.readyState === WebSocket.OPEN && !responseInFlight) {
+                  openaiWS.send(JSON.stringify({
+                    type: "response.create",
+                    response: { modalities: ["audio", "text"] }
+                  }));
+                  firstResponseRequested = true;
+                  responseInFlight = true;
+                  console.log("[realtime] requested first spoken response");
+                }
+              }, 150);
             }
           }
+          break;
         }
 
         case "stop":
