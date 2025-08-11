@@ -80,6 +80,25 @@ async function sendPCM16AsPacedUlawFrames(twilioWS, streamSid, pcm16, frameSampl
   }
 }
 
+// === 8Khz to 16KHz upsampling helper
+function upsampleTo16k(pcm8k) {
+  // Simple 2x upsample: duplicate/interpolate samples
+  const out = new Int16Array(pcm8k.length * 2);
+  for (let i = 0, j = 0; i < pcm8k.length; i++, j += 2) {
+    const a = pcm8k[i];
+    const b = (i + 1 < pcm8k.length) ? pcm8k[i + 1] : a;
+    out[j] = a;
+    out[j + 1] = (a + b) >> 1; // linear interp between a and next
+  }
+  return out;
+}
+function int16ToBase64LE(int16) {
+  const buf = Buffer.allocUnsafe(int16.length * 2);
+  for (let i = 0; i < int16.length; i++) buf.writeInt16LE(int16[i], i * 2);
+  return buf.toString("base64");
+}
+
+
 // ============ Attach Twilio <-> OpenAI bridge ============
 function attach(server) {
   const wss = new WebSocket.Server({
@@ -188,43 +207,44 @@ function attach(server) {
             console.log("[twilio] inbound media frames:", twilioWS._frameCount);
           }
 
-          // Convert this μ-law frame (≈20ms, 160 bytes) to PCM16 and accumulate
+          // === inside twilioWS.on("message") -> case "media":
           if (openaiReady && openaiWS?.readyState === WebSocket.OPEN) {
-            const ulaw = b64ToBuf(msg.media.payload);
-            const pcmChunk = new Int16Array(ulaw.length);
-            for (let i = 0; i < ulaw.length; i++) pcmChunk[i] = mulawToPcm16(ulaw[i]);
+            // Twilio frame: μ-law 8k (~20ms, 160 bytes)
+            const ulaw = Buffer.from(msg.media.payload, "base64");
+            const pcm8k = new Int16Array(ulaw.length);
+            for (let i = 0; i < ulaw.length; i++) pcm8k[i] = mulawToPcm16(ulaw[i]);
 
-            // Grow the PCM batch
-            const combined = new Int16Array(pcmBatch.length + pcmChunk.length);
-            combined.set(pcmBatch, 0);
-            combined.set(pcmChunk, pcmBatch.length);
-            pcmBatch = combined;
+            // Upsample 8k -> 16k
+            const pcm16k = upsampleTo16k(pcm8k);
 
-            // Once we have ≥200ms, append+commit in one go
-            if (pcmBatch.length >= APPEND_SAMPLES && !responseInFlight) {
-              const pcmToSend = pcmBatch.subarray(0, APPEND_SAMPLES); // exactly 200ms
-              const remaining = pcmBatch.subarray(APPEND_SAMPLES);
-              pcmBatch = new Int16Array(remaining.length);
-              pcmBatch.set(remaining, 0);
+            // Accumulate to ~200ms at 16k => 3200 samples
+            if (!twilioWS._pcm16kBatch) twilioWS._pcm16kBatch = new Int16Array(0);
+            const merged = new Int16Array(twilioWS._pcm16kBatch.length + pcm16k.length);
+            merged.set(twilioWS._pcm16kBatch, 0);
+            merged.set(pcm16k, twilioWS._pcm16kBatch.length);
+            twilioWS._pcm16kBatch = merged;
 
-              const b64 = int16ToBase64LE(pcmToSend);
-              console.log("[realtime] appending PCM16 samples:", pcmToSend.length, "(~200ms)");
+            const APPEND_SAMPLES_16K = 3200; // ~200ms @ 16k
+            if (twilioWS._pcm16kBatch.length >= APPEND_SAMPLES_16K && !responseInFlight) {
+              const slice = twilioWS._pcm16kBatch.subarray(0, APPEND_SAMPLES_16K);
+              const remain = twilioWS._pcm16kBatch.subarray(APPEND_SAMPLES_16K);
+              twilioWS._pcm16kBatch = new Int16Array(remain.length);
+              twilioWS._pcm16kBatch.set(remain, 0);
 
-              // Declare format + sample rate on the append
+              const b64 = int16ToBase64LE(slice);
+              console.log("[realtime] appending PCM16@16k samples:", slice.length, "(~200ms)");
+
               openaiWS.send(JSON.stringify({
                 type: "input_audio_buffer.append",
-                audio: b64,
-                audio_format: "pcm16",
-                sample_rate_hz: 8000
+                audio: b64 // single base64 string of 16k PCM16 LE
               }));
 
-              // Give the server time to ingest before commit
-              await sleep(120);
+              // brief ingest delay
+              await new Promise(r => setTimeout(r, 100));
 
               console.log("[realtime] committing input buffer");
               openaiWS.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
 
-              // After the first successful commit, ask the model to speak
               if (!firstResponseRequested) {
                 setTimeout(() => {
                   if (openaiWS.readyState === WebSocket.OPEN && !responseInFlight) {
@@ -240,7 +260,6 @@ function attach(server) {
               }
             }
           }
-          break;
         }
 
         case "stop":
