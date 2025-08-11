@@ -168,24 +168,31 @@ function attach(server){
             ulawBytesAccum += chunk.length;
 
             // Once we have >=100ms of audio, append+commit in one go
-            if(ulawBytesAccum >= APPEND_THRESHOLD && !responseInFlight){
+            if (ulawBytesAccum >= APPEND_THRESHOLD && !responseInFlight) {
               const combined = Buffer.concat(ulawChunks, ulawBytesAccum);
               ulawChunks = [];
               ulawBytesAccum = 0;
 
-              // Append one ≥100ms chunk
+              // Log what we're about to send
+              console.log("[realtime] appending uLaw bytes:", combined.length);
+
+              // Send as an ARRAY of base64 chunks (more compatible)
+              const b64 = combined.toString("base64");
               openaiWS.send(JSON.stringify({
-                type:"input_audio_buffer.append",
-                audio: combined.toString("base64") // μ-law base64
+                type: "input_audio_buffer.append",
+                audio: [ b64 ]            // <-- array form
               }));
 
-              // Commit, then (if first time) ask the model to speak
-              openaiWS.send(JSON.stringify({ type:"input_audio_buffer.commit" }));
+              // Give the server a beat to ingest before we commit
+              await new Promise(r => setTimeout(r, 60));
 
-              if(!firstResponseRequested){
+              console.log("[realtime] committing input buffer");
+              openaiWS.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+
+              if (!firstResponseRequested) {
                 openaiWS.send(JSON.stringify({
-                  type:"response.create",
-                  response:{ modalities:["audio","text"] }
+                  type: "response.create",
+                  response: { modalities: ["audio","text"] }
                 }));
                 firstResponseRequested = true;
                 responseInFlight = true;
