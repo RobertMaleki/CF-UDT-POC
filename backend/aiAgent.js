@@ -96,6 +96,14 @@ function upsampleTo16k(pcm8k) {
   return out;
 }
 
+function applyGain(int16, gain = 1.6) {
+  for (let i = 0; i < int16.length; i++) {
+    const v = int16[i] * gain;
+    int16[i] = v > 32767 ? 32767 : v < -32768 ? -32768 : v | 0;
+  }
+  return int16;
+}
+
 function downsample16kTo8k(pcm16k) {
   // Simple 2:1 downsample (average pairs). Good enough for phone audio.
   const out = new Int16Array(Math.floor(pcm16k.length / 2));
@@ -221,6 +229,8 @@ function attach(server) {
         console.error("[realtime] WS error:", err?.message || err);
       });
 
+      let audioDeltaCount = 0;
+
       openaiWS.on("message", async (raw) => {
         let msg;
         try { msg = JSON.parse(raw.toString()); } catch { return; }
@@ -233,21 +243,23 @@ function attach(server) {
         else if (msg.type === "response.completed") { responseInFlight = false; }
         else if (msg.type === "response.error") { responseInFlight = false; }
 
-        /*
-        // Stream model audio back to Twilio (μ-law paced at 8k)
-        if (msg.type === "response.audio.delta" && msg.audio && streamSid) {
-          const buf = Buffer.from(msg.audio, "base64");
-          const pcm = new Int16Array(buf.buffer, buf.byteOffset, buf.length / 2);
-          await sendPCM16AsPacedUlawFrames(twilioWS, streamSid, pcm, 160, 20);
-        }
-        */
+
 
         if (msg.type === "response.audio.delta" && msg.audio && streamSid) {
+
+          audioDeltaCount++;
+          if (audioDeltaCount % 10 === 1) {
+            console.log("[realtime] audio.delta frames so far:", audioDeltaCount);
+          }
+
+          // Model sends PCM16 @ 16kHz base64
           const buf = Buffer.from(msg.audio, "base64");
           const pcm16k = new Int16Array(buf.buffer, buf.byteOffset, buf.length / 2);
 
-          // ↓↓↓ critical fix: convert 16k → 8k for Twilio
-          const pcm8k = downsample16kTo8k(pcm16k);
+          // Downsample to 8k for Twilio, then add a modest gain
+          let pcm8k = downsample16kTo8k(pcm16k);
+          pcm8k = applyGain(pcm8k, 1.6);
+          //const pcm8k = downsample16kTo8k(pcm16k);
 
           // Optional: small gain boost for intelligibility (keep under 1.5x to avoid clipping)
           // for (let i = 0; i < pcm8k.length; i++) pcm8k[i] = Math.max(-32768, Math.min(32767, (pcm8k[i] * 1.2)|0));
