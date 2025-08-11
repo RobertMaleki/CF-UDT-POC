@@ -20,7 +20,7 @@ Mission: book a time for the caller to come in and redeem a free trial pass this
 Keep responses under ~10 seconds and avoid long monologues.
 `;
 
-const ECHO_TEST = process.env.ECHO_TEST === "false"; // optional toggle
+//const ECHO_TEST = process.env.ECHO_TEST === "false"; // optional toggle
 
 // ============ μ-law <-> PCM16 helpers ============
 const BIAS = 0x84, SIGN_BIT = 0x80, QUANT_MASK = 0x0F, SEG_MASK = 0x70;
@@ -233,7 +233,7 @@ function attach(server) {
           if (++twilioWS._frameCount % 25 === 0) {
             console.log("[twilio] inbound media frames:", twilioWS._frameCount);
           }
-
+          /*
           // ---- Echo fallback (only if OpenAI not ready or ECHO_TEST=true)
           if (ECHO_TEST || !openaiReady || openaiWS?.readyState !== WebSocket.OPEN) {
             // loop caller audio back ~real-time
@@ -244,6 +244,7 @@ function attach(server) {
             await sendPCM16AsPacedUlawFrames(twilioWS, streamSid, pcm, 160, 20);
             return; // skip OpenAI path on this frame
           }
+          */
 
 
           // === inside twilioWS.on("message") -> case "media":
