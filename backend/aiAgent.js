@@ -123,6 +123,7 @@ async function sendPCM16AsPacedUlawFrames(twilioWS, streamSid, pcm16, frameSampl
   }
 }
 
+/*
 // Binary append helper (PCM16 LE @ 16 kHz, mono)
 function sendBinaryPcm16ToOpenAI(ws, pcm16le) {
   const header = Buffer.from("Content-Type: audio/pcm;rate=16000;channels=1\r\n\r\n");
@@ -133,6 +134,7 @@ function sendBinaryPcm16ToOpenAI(ws, pcm16le) {
     ws.send(frame, { binary: true }, (err) => (err ? reject(err) : resolve()));
   });
 }
+*/
 
 // =================== Bridge attach =====================
 function attach(server) {
@@ -158,7 +160,7 @@ function attach(server) {
     let firstResponseRequested = false;
 
     // Inbound batching as PCM16@16k — use 3200 (200ms) or bump to 6400 (400ms) if you want fewer commits
-    const APPEND_SAMPLES_16K = 3200; // 200ms @ 16k
+    const APPEND_SAMPLES_16K = 6400; // ~400ms @ 16k
     let pcm16kBatch = new Int16Array(0);
 
     if (!process.env.OPENAI_API_KEY) {
@@ -292,11 +294,23 @@ function attach(server) {
             pcm16kBatch = new Int16Array(remain.length);
             pcm16kBatch.set(remain, 0);
 
-            console.log("[realtime] appending PCM16@16k (binary):", slice.length, "samples (~200ms)");
-            await sendBinaryPcm16ToOpenAI(openaiWS, slice);
+            // Convert Int16Array -> base64 (little-endian)
+            const buf = Buffer.allocUnsafe(slice.length * 2);
+            for (let i = 0; i < slice.length; i++) buf.writeInt16LE(slice[i], i * 2);
+            const b64 = buf.toString("base64");
 
-            // tiny ingest cushion; do not remove
-            await sleep(80);
+            console.log("[realtime] appending PCM16@16k JSON:", slice.length, "samples (~400ms)");
+
+            // await ws.send via a Promise
+            await new Promise((resolve, reject) => {
+              openaiWS.send(JSON.stringify({
+                type: "input_audio_buffer.append",
+                audio: b64
+              }), (err) => err ? reject(err) : resolve());
+            });
+
+            // small ingest cushion
+            await new Promise(r => setTimeout(r, 120));
 
             console.log("[realtime] committing input buffer");
             openaiWS.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
