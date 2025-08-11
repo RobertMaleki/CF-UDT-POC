@@ -40,14 +40,12 @@ function pcm16ToMulaw(sample) {
   let mu = ~(sign | (exponent << 4) | mantissa);
   return mu & 0xff;
 }
-const b64ToBuf = (b64) => Buffer.from(b64, "base64");
-const bufToB64 = (buf) => Buffer.from(buf).toString("base64");
 
-function muLawB64ToPCM16(b64) {
-  const u8 = b64ToBuf(b64);
-  const pcm = new Int16Array(u8.length);
-  for (let i = 0; i < u8.length; i++) pcm[i] = mulawToPcm16(u8[i]);
-  return pcm;
+const b64ToBuf = (b64) => Buffer.from(b64, "base64");
+function int16ToBase64LE(int16Array) {
+  const buf = Buffer.allocUnsafe(int16Array.length * 2);
+  for (let i = 0; i < int16Array.length; i++) buf.writeInt16LE(int16Array[i], i * 2);
+  return buf.toString("base64");
 }
 function pcm16ToMuLawB64(int16) {
   const mu = Buffer.alloc(int16.length);
@@ -104,10 +102,10 @@ function attach(server) {
     let responseInFlight = false;
     let firstResponseRequested = false;
 
-    // μ-law accumulation for ≥100ms appends
-    let ulawChunks = [];          // Array<Buffer>
-    let ulawBytesAccum = 0;       // total bytes in batch
-    const APPEND_THRESHOLD = 800; // ~100ms @ 8kHz μ-law
+    // PCM16 accumulation for ≥200ms appends (200ms = 1600 samples @ 8k)
+    const SAMPLE_RATE = 8000;
+    const APPEND_SAMPLES = 1600; // 200ms
+    let pcmBatch = new Int16Array(0);
 
     if (!process.env.OPENAI_API_KEY) {
       console.warn("[realtime] OPENAI_API_KEY not set — skipping OpenAI bridge (tone test only)");
@@ -116,20 +114,20 @@ function attach(server) {
 
       openaiWS.on("open", () => {
         console.log("[realtime] OpenAI WS open");
-        // μ-law in, PCM16 out (we convert to μ-law for Twilio on the way back)
+        // Expect PCM16 input/output; we convert Twilio μ-law to PCM16 before appending
         openaiWS.send(JSON.stringify({
           type: "session.update",
           session: {
             instructions: SYSTEM_PROMPT,
             voice: "alloy",
-            input_audio_format: "g711_ulaw",
+            input_audio_format: "pcm16",
             output_audio_format: "pcm16",
           },
         }));
         openaiReady = true;
       });
 
-      // Log everything from Realtime; stream audio deltas back to Twilio (paced)
+      // Log everything; stream audio deltas back to Twilio (paced)
       openaiWS.on("message", async (raw) => {
         let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
 
@@ -142,7 +140,7 @@ function attach(server) {
         else if (msg.type === "response.error") { responseInFlight = false; }
 
         if (msg.type === "response.audio.delta" && msg.audio && streamSid) {
-          const buf = b64ToBuf(msg.audio);
+          const buf = Buffer.from(msg.audio, "base64");
           const pcm = new Int16Array(buf.buffer, buf.byteOffset, buf.length / 2);
           await sendPCM16AsPacedUlawFrames(twilioWS, streamSid, pcm, 160, 20);
         }
@@ -174,7 +172,7 @@ function attach(server) {
 
           // 2s tone (paced) to prove downlink
           try {
-            const tone = generateTonePCM16({ freq: 440, ms: 2000, sampleRate: 8000 });
+            const tone = generateTonePCM16({ freq: 440, ms: 2000, sampleRate: SAMPLE_RATE });
             await sendPCM16AsPacedUlawFrames(twilioWS, streamSid, tone, 160, 20);
             console.log("[twilio] sent 2s test tone (paced minimal frames)");
           } catch (e) {
@@ -190,35 +188,41 @@ function attach(server) {
             console.log("[twilio] inbound media frames:", twilioWS._frameCount);
           }
 
-          // Batch μ-law frames for ≥100ms before append+commit
+          // Convert this μ-law frame (≈20ms, 160 bytes) to PCM16 and accumulate
           if (openaiReady && openaiWS?.readyState === WebSocket.OPEN) {
-            const chunk = b64ToBuf(msg.media.payload); // μ-law bytes for ~20ms
-            ulawChunks.push(chunk);
-            ulawBytesAccum += chunk.length;
+            const ulaw = b64ToBuf(msg.media.payload);
+            const pcmChunk = new Int16Array(ulaw.length);
+            for (let i = 0; i < ulaw.length; i++) pcmChunk[i] = mulawToPcm16(ulaw[i]);
 
-            if (ulawBytesAccum >= APPEND_THRESHOLD && !responseInFlight) {
-              const combined = Buffer.concat(ulawChunks, ulawBytesAccum);
-              ulawChunks = [];
-              ulawBytesAccum = 0;
+            // Grow the PCM batch
+            const combined = new Int16Array(pcmBatch.length + pcmChunk.length);
+            combined.set(pcmBatch, 0);
+            combined.set(pcmChunk, pcmBatch.length);
+            pcmBatch = combined;
 
-              const b64 = combined.toString("base64");
-              console.log("[realtime] appending uLaw bytes:", combined.length);
+            // Once we have ≥200ms, append+commit in one go
+            if (pcmBatch.length >= APPEND_SAMPLES && !responseInFlight) {
+              const pcmToSend = pcmBatch.subarray(0, APPEND_SAMPLES); // exactly 200ms
+              const remaining = pcmBatch.subarray(APPEND_SAMPLES);
+              pcmBatch = new Int16Array(remaining.length);
+              pcmBatch.set(remaining, 0);
 
-              // Append one ≥100ms chunk (single base64 string)
+              const b64 = int16ToBase64LE(pcmToSend);
+              console.log("[realtime] appending PCM16 samples:", pcmToSend.length, "(~200ms)");
+
               openaiWS.send(JSON.stringify({
                 type: "input_audio_buffer.append",
-                audio: b64,
+                audio: b64
               }));
 
-              // Small delay so the server ingests before commit
-              await sleep(80);
+              // Tiny delay so the server ingests the append before commit
+              await sleep(60);
 
               console.log("[realtime] committing input buffer");
               openaiWS.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
 
               // After the first successful commit, ask the model to speak
               if (!firstResponseRequested) {
-                // Nudge shortly after commit (avoid overlap with commit processing)
                 setTimeout(() => {
                   if (openaiWS.readyState === WebSocket.OPEN && !responseInFlight) {
                     openaiWS.send(JSON.stringify({
