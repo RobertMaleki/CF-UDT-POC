@@ -20,6 +20,8 @@ Mission: book a time for the caller to come in and redeem a free trial pass this
 Keep responses under ~10 seconds and avoid long monologues.
 `;
 
+const ECHO_TEST = process.env.ECHO_TEST === "true"; // optional toggle
+
 // ============ μ-law <-> PCM16 helpers ============
 const BIAS = 0x84, SIGN_BIT = 0x80, QUANT_MASK = 0x0F, SEG_MASK = 0x70;
 
@@ -129,7 +131,27 @@ function attach(server) {
     if (!process.env.OPENAI_API_KEY) {
       console.warn("[realtime] OPENAI_API_KEY not set — skipping OpenAI bridge (tone test only)");
     } else {
-      openaiWS = new WebSocket(OPENAI_REALTIME_URL, { headers: OPENAI_HEADERS });
+      const url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview";
+      console.log("[realtime] connecting to:", url);
+
+        openaiWS = new WebSocket(url, {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            "OpenAI-Beta": "realtime=v1",
+          },
+          handshakeTimeout: 15000,
+          perMessageDeflate: false,
+        });
+
+          // log why the handshake failed (status, headers, body snippet)
+          openaiWS.on("unexpected-response", (req, res) => {
+            let body = "";
+            res.on("data", (c) => { body += c.toString(); if (body.length > 500) body = body.slice(0, 500) + "..."; });
+            res.on("end", () => {
+              console.error("[realtime] unexpected-response",
+                { status: res.statusCode, headers: res.headers, body });
+            });
+          });
 
       openaiWS.on("open", () => {
         console.log("[realtime] OpenAI WS open");
@@ -143,7 +165,15 @@ function attach(server) {
             output_audio_format: "pcm16",
           },
         }));
-        openaiReady = true;
+      });
+
+      openaiWS.on("close", (code, reasonBuf) => {
+        const reason = reasonBuf?.toString() || "";
+        console.error("[realtime] WS closed", { code, reason });
+      });
+
+      openaiWS.on("error", (err) => {
+        console.error("[realtime] WS error:", err?.message || err);
       });
 
       // Log everything; stream audio deltas back to Twilio (paced)
@@ -164,9 +194,6 @@ function attach(server) {
           await sendPCM16AsPacedUlawFrames(twilioWS, streamSid, pcm, 160, 20);
         }
       });
-
-      openaiWS.on("close", () => console.log("[realtime] OpenAI WS closed"));
-      openaiWS.on("error", (err) => console.error("[realtime] OpenAI WS error:", err?.message || err));
     }
 
     // Keepalive pings
@@ -206,6 +233,18 @@ function attach(server) {
           if (++twilioWS._frameCount % 25 === 0) {
             console.log("[twilio] inbound media frames:", twilioWS._frameCount);
           }
+
+          // ---- Echo fallback (only if OpenAI not ready or ECHO_TEST=true)
+          if (ECHO_TEST || !openaiReady || openaiWS?.readyState !== WebSocket.OPEN) {
+            // loop caller audio back ~real-time
+            const ulaw = Buffer.from(msg.media.payload, "base64");
+            // Convert to PCM16 to avoid transcoding drift, then right back to μ-law paced
+            const pcm = new Int16Array(ulaw.length);
+            for (let i = 0; i < ulaw.length; i++) pcm[i] = mulawToPcm16(ulaw[i]);
+            await sendPCM16AsPacedUlawFrames(twilioWS, streamSid, pcm, 160, 20);
+            return; // skip OpenAI path on this frame
+          }
+
 
           // === inside twilioWS.on("message") -> case "media":
           if (openaiReady && openaiWS?.readyState === WebSocket.OPEN) {
