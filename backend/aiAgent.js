@@ -12,12 +12,12 @@ const OPENAI_HEADERS = {
 const SYSTEM_PROMPT = `
 You are a friendly, upbeat Crunch Fitness outbound agent.
 Mission: book a time for the caller to come in and redeem a free trial pass this week.
-- Greet immediately and confirm you're calling from Crunch Fitness with a free trial pass invite.
+- Greet warmly and confirm you're calling from Crunch Fitness about a free trial pass.
 - Ask about their goal (lose weight, strength, classes).
 - Offer two specific visit windows (e.g., "today 6–8pm" or "tomorrow 7–9am").
 - Handle objections concisely and positively.
 - Confirm day/time, repeat back, and close warmly.
-Keep responses under ~10 seconds.
+Keep responses under ~10 seconds and avoid long monologues.
 `;
 
 // ============ μ-law <-> PCM16 helpers ============
@@ -67,8 +67,11 @@ function attach(server){
     let openaiWS=null;
     let openaiReady=false;
     let responseInFlight=false;
+
+    // For commit scheduling
     let lastCommitAt=0;
-    let appendedSinceLastCommit=false; // <— guard against empty commits
+    let appendedSinceLastCommit=false;
+    let inboundMsAccum=0; // ~how much caller audio we’ve appended
 
     if(!process.env.OPENAI_API_KEY){
       console.warn("[realtime] OPENAI_API_KEY not set — skipping OpenAI bridge (tone test only)");
@@ -77,31 +80,20 @@ function attach(server){
 
       openaiWS.on("open",()=>{
         console.log("[realtime] OpenAI WS open");
-        // Explicit 8k PCM16 I/O + voice
+        // 🔧 Correct formats: Twilio sends μ-law 8k; we want model to output PCM16 (we’ll convert to μ-law)
         openaiWS.send(JSON.stringify({
           type:"session.update",
           session:{
             instructions:SYSTEM_PROMPT,
             voice:"alloy",
-            input_audio_format:{ type:"pcm16", sample_rate_hz:8000 },
-            output_audio_format:{ type:"pcm16", sample_rate_hz:8000 }
-          }
-        }));
-
-        // Force initial spoken greeting with valid modalities
-        const greeting = "Hi! This is the Crunch Fitness team. I’ve got a free trial pass for you—can I quickly check what time works best to come in this week?";
-        console.log("[realtime] response.create (audio+text greeting)");
-        openaiWS.send(JSON.stringify({
-          type:"response.create",
-          response:{
-            modalities:["audio","text"],
-            instructions:greeting
+            input_audio_format: "g711_ulaw", // <— string, not object
+            output_audio_format: "pcm16"     // <— model speaks PCM16; we’ll convert & pace
           }
         }));
         openaiReady=true;
       });
 
-      // Log every OpenAI message so we can see errors
+      // Log every OpenAI message so we can see errors + audio
       openaiWS.on("message", async (raw)=>{
         let msg; try{ msg=JSON.parse(raw.toString()); }catch{ return; }
 
@@ -142,7 +134,7 @@ function attach(server){
           streamSid = msg.start?.streamSid;
           console.log("[twilio] stream start callSid:", msg.start?.callSid, "streamSid:", streamSid);
 
-          // 2s tone (paced) to prove downlink
+          // 2s tone (paced) to prove downlink immediately
           try{
             const tone=generateTonePCM16({freq:440,ms:2000,sampleRate:8000});
             await sendPCM16AsPacedUlawFrames(twilioWS, streamSid, tone, 160, 20);
@@ -152,31 +144,44 @@ function attach(server){
         }
 
         case "media": {
-          // Prove inbound flow
+          // Prove inbound audio flow
           if(!twilioWS._frameCount) twilioWS._frameCount=0;
           if(++twilioWS._frameCount % 25 === 0){
             console.log("[twilio] inbound media frames:", twilioWS._frameCount);
           }
 
-          // Feed caller audio to OpenAI (8k μ-law -> PCM16)
+          // Forward caller audio to OpenAI (μ-law passthrough per session.input_audio_format)
           if(openaiReady && openaiWS?.readyState===WebSocket.OPEN){
-            const pcm16 = muLawB64ToPCM16(msg.media.payload);
+            // Each Twilio media frame is 20ms @ 8k. Accumulate time to decide when to trigger a response.
+            inboundMsAccum += 20;
+
+            // Append raw μ-law as-is (no conversion) because session.input_audio_format = "g711_ulaw"
             openaiWS.send(JSON.stringify({
               type:"input_audio_buffer.append",
-              audio: bufToB64(Buffer.from(pcm16.buffer))
+              audio: msg.media.payload    // already base64 μ-law
             }));
-            appendedSinceLastCommit = true; // <— mark we appended something
+            appendedSinceLastCommit = true;
 
-            const now=Date.now();
-            const shouldCommit = now - lastCommitAt > 300;
-            if(shouldCommit && !responseInFlight && appendedSinceLastCommit){
+            const now = Date.now();
+            const readyToCommit = appendedSinceLastCommit && (now - lastCommitAt > 300);
+            const haveEnoughInbound = inboundMsAccum >= 300; // ~first 300ms of user audio
+
+            // Only commit if we have appended audio AND no response is in flight
+            if(readyToCommit && !responseInFlight){
               lastCommitAt = now;
-              appendedSinceLastCommit = false; // reset
+              appendedSinceLastCommit = false;
+
               openaiWS.send(JSON.stringify({ type:"input_audio_buffer.commit" }));
-              openaiWS.send(JSON.stringify({
-                type:"response.create",
-                response:{ modalities:["audio","text"] }
-              }));
+
+              // First response: after ~300ms of inbound audio, ask the model to speak
+              const firstTurn = haveEnoughInbound && !twilioWS._askedFirstTurn;
+              const responsePayload = firstTurn
+                ? { modalities:["audio","text"], instructions:"Hello! This is Crunch Fitness. I’ve got a free trial pass for you. What time works best this week to stop by?" }
+                : { modalities:["audio","text"] };
+
+              openaiWS.send(JSON.stringify({ type:"response.create", response: responsePayload }));
+              if(firstTurn) twilioWS._askedFirstTurn = true;
+
               responseInFlight = true;
             }
           }
