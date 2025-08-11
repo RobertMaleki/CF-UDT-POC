@@ -9,6 +9,32 @@ const OPENAI_HEADERS = {
   "OpenAI-Beta": "realtime=v1",
 };
 
+// sleep constant
+const sleep = (ms)=>new Promise(r=>setTimeout(r, ms));
+
+// ---- inside attach(server) -> twilioWS.on("message", async (raw) => { ... switch(msg.event) { ----
+case "start": {
+  streamSid = msg.start?.streamSid;
+  console.log("[twilio] stream start callSid:", msg.start?.callSid, "streamSid:", streamSid);
+
+  // ---- Send 2s tone as paced 20ms frames (spec-minimal payload) ----
+  try {
+    const tonePcm = generateTonePCM16({ freq: 440, ms: 2000, sampleRate: 8000 });
+    const FRAME = 160; // 20ms @ 8kHz
+    for (let i = 0; i < tonePcm.length; i += FRAME) {
+      const chunk = tonePcm.subarray(i, i + FRAME);
+      const ulawB64 = pcm16ToMuLawB64(chunk);
+      const mediaMsg = { event: "media", streamSid, media: { payload: ulawB64 } };
+      twilioWS.send(JSON.stringify(mediaMsg));
+      await sleep(20);
+    }
+    console.log("[twilio] sent 2s test tone (paced minimal frames)");
+  } catch (e) {
+    console.error("[twilio] test tone error:", e?.message || e);
+  }
+  break;
+}
+
 const SYSTEM_PROMPT = `
 You are a friendly, upbeat Crunch Fitness outbound agent.
 Mission: book a time for the caller to come in and redeem a free trial pass this week.
@@ -182,6 +208,12 @@ function attach(server) {
 
           const now = Date.now();
           const shouldCommit = now - lastCommitAt > 250;
+
+          if (!twilioWS._frameCount) twilioWS._frameCount = 0;
+          twilioWS._frameCount++;
+          if (twilioWS._frameCount % 25 === 0) {
+            console.log("[twilio] inbound media frames:", twilioWS._frameCount);
+          }
 
           const pcm16 = muLawB64ToPCM16(msg.media.payload);
           openaiWS.send(JSON.stringify({
