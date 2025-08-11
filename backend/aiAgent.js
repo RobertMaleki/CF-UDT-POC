@@ -210,6 +210,7 @@ function attach(server) {
               const b64 = int16ToBase64LE(pcmToSend);
               console.log("[realtime] appending PCM16 samples:", pcmToSend.length, "(~200ms)");
 
+              // Declare format + sample rate on the append
               openaiWS.send(JSON.stringify({
                 type: "input_audio_buffer.append",
                 audio: b64,
@@ -217,7 +218,7 @@ function attach(server) {
                 sample_rate_hz: 8000
               }));
 
-              // Tiny delay so the server ingests the append before commit
+              // Give the server time to ingest before commit
               await sleep(120);
 
               console.log("[realtime] committing input buffer");
