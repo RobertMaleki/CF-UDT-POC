@@ -129,17 +129,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Send PCM16 (8kHz) to Twilio as paced μ-law frames (~20ms each). */
 async function sendPCM16AsPacedUlawFrames(twilioWS, streamSid, pcm16, frameSamples = 160, frameMs = 20) {
+  let sent = 0;
   for (let i = 0; i < pcm16.length; i += frameSamples) {
     const chunk = pcm16.subarray(i, i + frameSamples);
     const payload = pcm16ToMuLawB64(chunk);
     try {
       twilioWS.send(JSON.stringify({ event: "media", streamSid, media: { payload } }));
+      sent++;
     } catch (e) {
       console.error("[twilio] send error:", e?.message || e);
       break;
     }
     await sleep(frameMs);
   }
+  if (sent > 0) console.log("[twilio] finished sending frames:", sent);
 }
 
 /*
