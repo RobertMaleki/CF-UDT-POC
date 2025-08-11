@@ -173,33 +173,38 @@ function attach(server){
               ulawChunks = [];
               ulawBytesAccum = 0;
 
-              // Log what we're about to send
+              const b64 = combined.toString("base64");
               console.log("[realtime] appending uLaw bytes:", combined.length);
 
-              // Send as an ARRAY of base64 chunks (more compatible)
-              const b64 = combined.toString("base64");
+              // Send ONE base64 string (not an array)
               openaiWS.send(JSON.stringify({
                 type: "input_audio_buffer.append",
-                audio: [ b64 ]            // <-- array form
+                audio: b64
               }));
 
-              // Give the server a beat to ingest before we commit
-              await new Promise(r => setTimeout(r, 60));
+              // Give the server a brief moment to ingest
+              await new Promise(r => setTimeout(r, 80));
 
               console.log("[realtime] committing input buffer");
               openaiWS.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
 
-              if (!firstResponseRequested) {
-                openaiWS.send(JSON.stringify({
-                  type: "response.create",
-                  response: { modalities: ["audio","text"] }
-                }));
-                firstResponseRequested = true;
-                responseInFlight = true;
-                console.log("[realtime] requested first spoken response");
+                // Don't call response.create here; wait for the next cycle where
+                // responseInFlight is false and we've actually committed.
+                if (!firstResponseRequested) {
+                  // Nudge the model to speak on the next loop after commit
+                  setTimeout(() => {
+                    if (openaiWS.readyState === WebSocket.OPEN && !responseInFlight) {
+                      openaiWS.send(JSON.stringify({
+                        type: "response.create",
+                        response: { modalities: ["audio", "text"] }
+                      }));
+                      firstResponseRequested = true;
+                      responseInFlight = true;
+                      console.log("[realtime] requested first spoken response");
+                    }
+                  }, 120); // small delay after commit
+                }
               }
-            }
-          }
           break;
         }
 
