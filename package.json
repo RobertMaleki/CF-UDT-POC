@@ -1,25 +1,21 @@
 {
   "name": "cf-udt-poc",
   "version": "1.0.0",
-  "description": "POC for an AI-powered outbound call center agent for Crunch Fitness.",
+  "description": "POC: Outbound AI call agent (Crunch Fitness) using Twilio Media Streams + OpenAI Realtime.",
+  "main": "backend/server.js",
   "scripts": {
     "start": "node backend/server.js",
-    "dev": "npx nodemon backend/server.js"
+    "dev": "nodemon backend/server.js"
   },
-  "keywords": [],
-  "author": "",
   "license": "ISC",
-  "engines": {
-    "node": "22.x"
-  },
   "dependencies": {
-    "@fastify/formbody": "^8.0.2",
-    "@fastify/websocket": "^11.2.0",
+    "@fastify/formbody": "^8.0.0",
+    "@fastify/static": "^7.0.1",
+    "@fastify/websocket": "^10.0.1",
     "dotenv": "^17.2.1",
-    "express": "^5.1.0",
-    "fastify": "^5.5.0",
+    "fastify": "^4.28.1",
     "twilio": "^5.8.0",
-    "ws": "^8.18.3"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
