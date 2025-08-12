@@ -361,8 +361,7 @@ function attach(server) {
               setTimeout(() => {
                 if (openaiWS.readyState === WebSocket.OPEN && !responseInFlight) {
                   openaiWS.send(JSON.stringify({
-                    type: "response.create",
-                    response: { modalities: ["audio", "text"], audio: {voice: "alloy", format: "pcm16"} }
+                    type: "response.create"
                   }));
                   firstResponseRequested = true;
                   responseInFlight = true;
