@@ -244,3 +244,5 @@ fastify.post("/api/start-call", async (req, reply) => {
 fastify.listen({ port: Number(PORT), host: "0.0.0.0" })
   .then(() => console.log(`Fastify server → http://localhost:${PORT}`))
   .catch((e) => { console.error("Server failed:", e); process.exit(1); });
+
+  //FINAL
