@@ -1,7 +1,6 @@
 import Fastify from 'fastify';
 import WebSocket from 'ws';
 import fs from 'fs';
-import dotenv from 'dotenv';
 import fastifyFormBody from '@fastify/formbody';
 import fastifyWs from '@fastify/websocket';
 
