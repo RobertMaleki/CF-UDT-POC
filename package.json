@@ -13,8 +13,11 @@
     "node": "22.x"
   },
   "dependencies": {
+    "@fastify/formbody": "^8.0.2",
+    "@fastify/websocket": "^11.2.0",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
+    "fastify": "^5.5.0",
     "twilio": "^5.8.0",
     "ws": "^8.18.3"
   },
