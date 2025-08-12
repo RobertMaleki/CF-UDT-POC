@@ -54,6 +54,14 @@ const fastify = Fastify({ logger: false });
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
+// Serve frontend
+const FRONTEND_DIR = path.join(__dirname, "..", "frontend");
+app.register(fastifyStatic, { root: FRONTEND_DIR, prefix: "/" });
+app.get("/", async (_req, reply) => {
+  const file = path.join(FRONTEND_DIR, "index.html");
+  reply.type("text/html").send(fs.readFileSync(file, "utf8"));
+});
+
 // Root Route
 fastify.get('/', async (request, reply) => {
   reply.send({ message: 'Twilio Media Stream Server is running!'});
