@@ -12,7 +12,6 @@ dotenv.config();
 // ---- Env ----
 const {
   OPENAI_API_KEY,
-  OPENAI_ORG,
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
   TWILIO_NUMBER,
@@ -37,6 +36,7 @@ const OPENAI_HEADERS = {
 };
 
 // ---- Agent system prompt ----
+const VOICE = 'alloy';
 const SYSTEM_MESSAGE = `
 You are a friendly, upbeat Crunch Fitness outbound agent.
 Mission: book a time for the caller to come in and redeem a free trial pass this week.
@@ -46,6 +46,18 @@ Mission: book a time for the caller to come in and redeem a free trial pass this
 - Handle objections concisely and positively.
 - Confirm day/time, repeat back, and close warmly.
 Keep responses under ~10 seconds and avoid long monologues.`;
+
+// List of Event Types to log to the console. See the OpenAI Realtime API Documentation.
+const LOG_EVENT_TYPES = [
+    'error',
+    'response.content.done',
+    'rate_limits.updated',
+    'response.done',
+    'input_audio_buffer.committed',
+    'input_audio_buffer.speech_stopped',
+    'input_audio_buffer.speech_started',
+    'session.created'
+];
 
 // =====================================================
 
@@ -62,16 +74,24 @@ fastify.get("/", async (_req, reply) => {
   reply.type("text/html").send(fs.readFileSync(file, "utf8"));
 });
 
-// Root Route
-//fastify.get('/', async (request, reply) => {
-//  reply.send({ message: 'Twilio Media Stream Server is running!'});
-//})
+//>>:RRM ONLY IN CHATGPT Response
+fastify.all("/incoming-call", async (req, reply) => {
+  const base = PUBLIC_BASE_URL || (`https://${req.headers.host}`);
+  const wsUrl = base.replace(/^http/, "ws") + "/media-stream";
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>Connecting you to our Crunch assistant.</Say>
+  <Connect><Stream url="${wsUrl}" /></Connect>
+</Response>`;
+  reply.type("text/xml").send(twiml);
+});
 
 // WebSocket route for media-stream
 fastify.register(async (fastify) => {
     // Setup WebSocket server for handling media streams
     fastify.get('/media-stream', { websocket: true }, (connection, req) => {
-        console.log('Client connected');
+        console.log("[media] Twilio connected:", req.headers["user-agent"] || "n/a");
+        //>>:RRM replaced with aboveconsole.log('Client connected');
 
         const openaiWS = new WebSocket(OPENAI_REALTIME_URL, { headers: OPENAI_HEADERS});
 
@@ -94,6 +114,7 @@ fastify.register(async (fastify) => {
             console.log('Sending session update:', JSON.stringify(sessionUpdate));
             openaiWS.send(JSON.stringify(sessionUpdate));
 
+            // Make the AI speak first (like the tutorial)
             const initialConversationItem = {
                 type: 'conversation.item.create',
                 item: {
@@ -151,19 +172,26 @@ fastify.register(async (fastify) => {
 
                 switch (data.event) {
                     case 'media':
-                        if (openAiWs.readyState === WebSocket.OPEN) {
+                        if (openaiWS.readyState === WebSocket.OPEN) {
                             const audioAppend = {
                                 type: 'input_audio_buffer.append',
                                 audio: data.media.payload
                             };
 
-                            openAiWs.send(JSON.stringify(audioAppend));
+                            openaiWS.send(JSON.stringify(audioAppend));
                         }
                         break;
+
                     case 'start':
                         streamSid = data.start.streamSid;
                         console.log('Incoming stream has started', streamSid);
                         break;
+
+                    case "stop":
+                        console.log("Incoming stream has stopped");
+                        if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
+                        break;
+
                     default:
                         console.log('Received non-media event:', data.event);
                         break;
@@ -175,16 +203,16 @@ fastify.register(async (fastify) => {
 
         // Handle connection close
         connection.on('close', () => {
-            if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
+            if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close();
             console.log('Client disconnected.');
         });
 
         // Handle WebSocket close and errors
-        openAiWs.on('close', () => {
+        openaiWS.on('close', () => {
             console.log('Disconnected from the OpenAI Realtime API');
         });
 
-        openAiWs.on('error', (error) => {
+        openaiWS.on('error', (error) => {
             console.error('Error in the OpenAI WebSocket:', error);
         });
     });
@@ -216,5 +244,3 @@ fastify.post("/api/start-call", async (req, reply) => {
 fastify.listen({ port: Number(PORT), host: "0.0.0.0" })
   .then(() => console.log(`Fastify server → http://localhost:${PORT}`))
   .catch((e) => { console.error("Server failed:", e); process.exit(1); });
-
-  //FINISH
