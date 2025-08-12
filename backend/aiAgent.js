@@ -136,6 +136,7 @@ async function sendPCM16AsPacedUlawFrames(twilioWS, streamSid, pcm16, frameSampl
     try {
       twilioWS.send(JSON.stringify({ event: "media", streamSid, media: { payload } }));
       sent++;
+      if (sent % 25 === 0) console.log("[twilio] sent outbound frames:", sent);
     } catch (e) {
       console.error("[twilio] send error:", e?.message || e);
       break;
@@ -246,8 +247,7 @@ function attach(server) {
         else if (msg.type === "response.completed") { responseInFlight = false; }
         else if (msg.type === "response.error") { responseInFlight = false; }
 
-
-
+        // === STREAM MODEL AUDIO BACK TO TWILIO ===
         if (msg.type === "response.audio.delta" && msg.audio && streamSid) {
 
           audioDeltaCount++;
@@ -362,7 +362,7 @@ function attach(server) {
                 if (openaiWS.readyState === WebSocket.OPEN && !responseInFlight) {
                   openaiWS.send(JSON.stringify({
                     type: "response.create",
-                    response: { modalities: ["audio", "text"] }
+                    response: { modalities: ["audio", "text"], audio: {voice: "alloy", format: "pcm16"} }
                   }));
                   firstResponseRequested = true;
                   responseInFlight = true;
