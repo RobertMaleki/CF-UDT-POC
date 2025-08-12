@@ -56,16 +56,16 @@ fastify.register(fastifyWs);
 
 // Serve frontend
 const FRONTEND_DIR = path.join(__dirname, "..", "frontend");
-app.register(fastifyStatic, { root: FRONTEND_DIR, prefix: "/" });
-app.get("/", async (_req, reply) => {
+fastify.register(fastifyStatic, { root: FRONTEND_DIR, prefix: "/" });
+fastify.get("/", async (_req, reply) => {
   const file = path.join(FRONTEND_DIR, "index.html");
   reply.type("text/html").send(fs.readFileSync(file, "utf8"));
 });
 
 // Root Route
-fastify.get('/', async (request, reply) => {
-  reply.send({ message: 'Twilio Media Stream Server is running!'});
-})
+//fastify.get('/', async (request, reply) => {
+//  reply.send({ message: 'Twilio Media Stream Server is running!'});
+//})
 
 // WebSocket route for media-stream
 fastify.register(async (fastify) => {
