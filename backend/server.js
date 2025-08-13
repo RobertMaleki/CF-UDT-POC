@@ -81,7 +81,7 @@ async function appendToSheet({
     requestBody: { values },
   });
 }
-/*
+
 // ---- Call session store (per CallSid) ----
 const SESSIONS = new Map();
 function getOrCreateSession(callSid) {
@@ -97,7 +97,7 @@ function getOrCreateSession(callSid) {
   }
   return SESSIONS.get(callSid);
 }
-*/
+
 // =====================================================
 
 // Initialize Fastify
@@ -215,34 +215,6 @@ fastify.register(async (fastify) => {
             }
         });
         
-        /*
-        openaiWS.on("message", (data) => {
-            let msg; try { msg = JSON.parse(data); } catch { return; }
-
-            // user transcript (parsed by Realtime)
-            if (msg.type === "conversation.item.created" && msg.item?.role === "user") {
-                const sess = callSid ? getOrCreateSession(callSid) : null;
-                const texts = (msg.item.content || [])
-                .filter(p => p.type === "input_text" || p.type === "text") // model may normalize
-                .map(p => p.text)
-                .filter(Boolean);
-                if (sess && texts.length) sess.userTranscript.push(texts.join(" "));
-            }
-
-            // agent (assistant) transcript as it speaks
-            if (msg.type === "response.audio_transcript.delta" && msg.delta) {
-                const sess = callSid ? getOrCreateSession(callSid) : null;
-                if (sess) sess.agentTranscript.push(msg.delta);
-            }
-
-            // existing audio delta passthrough to Twilio...
-            if (msg.type === "response.audio.delta" && msg.audio && streamSid) {
-                const audioDelta = { event: "media", streamSid, media: { payload: msg.audio } };
-                connection.send(JSON.stringify(audioDelta));
-            }
-            });
-        */
-
         // Handle incoming messages from Twilio
         connection.on('message', (message) => {
             try {
@@ -313,11 +285,6 @@ fastify.post("/api/start-call", async (req, reply) => {
       from: TWILIO_NUMBER,
       url: twimlUrl // Twilio fetches TwiML here -> Connect Stream to our WS
     });
-
-    // store caller info under this CallSid
-    const sess = getOrCreateSession(call.sid);
-    sess.name = name;
-    sess.phone = phone;
 
     console.log("[start-call] created:", call.sid, "to:", phone);
     reply.send({ ok: true, sid: call.sid });
