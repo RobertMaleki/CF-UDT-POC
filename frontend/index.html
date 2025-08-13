@@ -84,7 +84,6 @@
     .kv{display:flex; gap:10px; align-items:flex-start}
     .kv strong{color:#eaf3ff}
     .diagram{width:100%; background:#0f131d; border-radius:12px; border:1px solid var(--border); padding:10px}
-    .logo { font-weight: 900; font-size: 22px; letter-spacing: .5px; margin-bottom: 8px; }
     footer{
       margin:28px 0 10px; font-size:12px; color:#9fb0c7; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;
     }
@@ -104,19 +103,14 @@
         <span class="badge">POC • Realtime Voice AI</span>
         <h1>Crunch Fitness — AI Outbound Call Agent</h1>
         <p>
-          <br>
           This demo showcases a multilingual, realtime voice agent that nurtures leads and books
-          in‑club trial passes — aligned with the vision for the organization's transformation.
-          <br>
-          Try it now >>>
+          in‑club trial passes — aligned with the needs of the role you’re hiring for.
+          Try it live below.
         </p>
+        <p class="hint">Built with Twilio Voice Media Streams + OpenAI Realtime (μ‑law, server VAD) and deployed on Render.</p>
       </div>
       <div class="cta-card">
         <form id="leadForm" class="form" autocomplete="on">
-          <div class="logo">Crunch Fitness</div>
-          <p class="muted">Get Your Free Trial Pass</p>
-          <p class="muted">Enter your details and our agent will call you shortly.</p>
-        </div>
           <div class="row">
             <div>
               <label for="name">Your name</label>
@@ -137,19 +131,18 @@
           </label>
 
           <button id="submitBtn" class="btn" type="submit">📞 Start demo call</button>
-          Privacy: Information collected here is solely for this demo and will not be sold or used for any other purpose.
           <div id="status" class="status" role="status" aria-live="polite"></div>
         </form>
 
         <div class="bonus">
           <strong>Bonus: try another language</strong>
           <div class="chips" id="langChips">
-            <span class="chip" data-lang="Spanish">Español</span>
-            <span class="chip" data-lang="French">Français</span>
-            <span class="chip" data-lang="Arabic">العربية</span>
-            <span class="chip" data-lang="Mandarin Chinese">中文</span>
-            <span class="chip" data-lang="Hindi">हिन्दी</span>
-            <span class="chip" data-lang="Portuguese">Português</span>
+            <button class="chip" data-lang="Spanish">Español</button>
+            <button class="chip" data-lang="French">Français</button>
+            <button class="chip" data-lang="Arabic">العربية</button>
+            <button class="chip" data-lang="Mandarin Chinese">中文</button>
+            <button class="chip" data-lang="Hindi">हिन्दी</button>
+            <button class="chip" data-lang="Portuguese">Português</button>
           </div>
           <div class="hint" id="langHint">Tip: answer the phone and speak in that language — the agent will follow.</div>
         </div>
@@ -163,6 +156,7 @@
         <div class="kvs">
           <div class="kv"><span>✅</span><div><strong>Outbound flow:</strong> Form → Fastify backend triggers a Twilio call → TwiML connects a media stream.</div></div>
           <div class="kv"><span>🎙️</span><div><strong>Realtime voice:</strong> Twilio streams μ‑law audio to OpenAI Realtime; the agent responds with μ‑law audio back to the caller.</div></div>
+          <div class="kv"><span>📝</span><div><strong>Call notes:</strong> User/agent transcripts captured; rows appended to Google Sheets at hang‑up.</div></div>
           <div class="kv"><span>🌍</span><div><strong>Multilingual:</strong> The model detects & responds in the language you speak — no extra config needed.</div></div>
         </div>
       </div>
@@ -222,6 +216,7 @@
 
     <footer>
       <div>© Robert Maleki</div>
+      <div>Privacy: Information collected here is solely for this demo and will not be sold or used for any other purpose.</div>
     </footer>
   </div>
 
@@ -233,6 +228,15 @@
     const preferredLanguage = document.getElementById('preferredLanguage');
     const langChips = document.getElementById('langChips');
     const langHint = document.getElementById('langHint');
+
+    // Language chips: store the selection (optional, informational)
+    langChips.addEventListener('click', (e) => {
+      const chip = e.target.closest('.chip');
+      if (!chip) return;
+      const lang = chip.dataset.lang;
+      preferredLanguage.value = lang;
+      langHint.textContent = `Selected: ${lang}. Answer the phone and speak in ${lang} — the agent will follow.`;
+    });
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
