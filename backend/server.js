@@ -82,6 +82,21 @@ async function appendToSheet({
   });
 }
 
+// ---- Call session store (per CallSid) ----
+const SESSIONS = new Map();
+function getOrCreateSession(callSid) {
+  if (!SESSIONS.has(callSid)) {
+    SESSIONS.set(callSid, {
+      callSid,
+      name: null,
+      phone: null,
+      userTranscript: [],
+      agentTranscript: [],
+      startedAt: new Date().toISOString(),
+    });
+  }
+  return SESSIONS.get(callSid);
+}
 
 // =====================================================
 
@@ -299,6 +314,7 @@ fastify.post("/api/start-call", async (req, reply) => {
       url: twimlUrl // Twilio fetches TwiML here -> Connect Stream to our WS
     });
 
+    // store caller info under this CallSid
     const sess = getOrCreateSession(call.sid);
     sess.name = name;
     sess.phone = phone;
