@@ -81,7 +81,7 @@ async function appendToSheet({
     requestBody: { values },
   });
 }
-
+/*
 // ---- Call session store (per CallSid) ----
 const SESSIONS = new Map();
 function getOrCreateSession(callSid) {
@@ -97,7 +97,7 @@ function getOrCreateSession(callSid) {
   }
   return SESSIONS.get(callSid);
 }
-
+*/
 // =====================================================
 
 // Initialize Fastify
@@ -284,18 +284,18 @@ fastify.register(async (fastify) => {
         connection.on('close', () => {
             if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close();
             console.log('Client disconnected.');
-            cleanup();                                                                          // RRM
+            cleanup();
         });
 
         // Handle WebSocket close and errors
         openaiWS.on('close', () => {
             console.log('Disconnected from the OpenAI Realtime API');
-            cleanup();                                                                          // RRM
+            cleanup();
         });
 
         openaiWS.on('error', (error) => {
             console.error('Error in the OpenAI WebSocket:', error);
-            cleanup();                                                                          // RRM
+            cleanup();
         });
     });
 });
