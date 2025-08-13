@@ -104,7 +104,7 @@ fastify.all("/incoming-call", async (req, reply) => {
   const wsUrl = base.replace(/^http/, "ws") + "/media-stream";
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>Connecting you to our Crunch assistant.</Say>
+  <Say>We're excited to start this journey of health and fitness with you. Connecting you to a Crunch Fitness expert.</Say>
   <Connect><Stream url="${wsUrl}" /></Connect>
 </Response>`;
   reply.type("text/xml").send(twiml);
@@ -156,7 +156,7 @@ fastify.register(async (fastify) => {
                     content: [
                         {
                             type: 'input_text',
-                            text: 'Greet the user with "Hello there! I\'m an AI voice assistant from Twilio and the OpenAI Realtime API. How can I help?"'
+                            text: '"Hello there! I\'m an AI voice assistant from Twilio and the OpenAI Realtime API. How can I help?"'
                         }
                     ]
                 }
