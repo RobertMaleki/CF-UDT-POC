@@ -198,7 +198,7 @@ fastify.register(async (fastify) => {
 
                     case "stop":
                         console.log("Incoming stream has stopped");
-                        if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
+                        if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close();
                         break;
 
                     default:
