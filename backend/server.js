@@ -7,6 +7,7 @@ const fastifyStatic = require("@fastify/static");
 const WebSocket = require("ws");
 const twilio = require("twilio");
 const dotenv = require("dotenv");
+const { google } = require("googleapis");
 dotenv.config();
 
 // ---- Env ----
@@ -58,6 +59,29 @@ const LOG_EVENT_TYPES = [
     'input_audio_buffer.speech_started',
     'session.created'
 ];
+
+// Google Functions
+async function appendToSheet({
+  sheetId,
+  serviceEmail,
+  privateKey,
+  values, // array of arrays
+}) {
+  const jwt = new google.auth.JWT({
+    email: serviceEmail,
+    key: privateKey,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
+  const sheets = google.sheets({ version: "v4", auth: jwt });
+  // Append to first sheet, next empty row
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: sheetId,
+    range: "A1",
+    valueInputOption: "RAW",
+    requestBody: { values },
+  });
+}
+
 
 // =====================================================
 
