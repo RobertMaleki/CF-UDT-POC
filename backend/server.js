@@ -293,6 +293,7 @@ fastify.register(async (fastify) => {
 
                     case "stop":
                         console.log("Incoming stream has stopped");
+                        flushAndEnd("twilio stop");
                         if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close();
                         break;
 
@@ -307,6 +308,7 @@ fastify.register(async (fastify) => {
 
         // Handle connection close
         connection.on('close', () => {
+            flushAndEnd("twilio stop");
             if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close();
             console.log('Client disconnected.');
             cleanup();
@@ -314,11 +316,13 @@ fastify.register(async (fastify) => {
 
         // Handle WebSocket close and errors
         openaiWS.on('close', () => {
+            flushAndEnd("twilio stop");
             console.log('Disconnected from the OpenAI Realtime API');
             cleanup();
         });
 
         openaiWS.on('error', (error) => {
+            flushAndEnd("twilio stop");
             console.error('Error in the OpenAI WebSocket:', error);
             cleanup();
         });
