@@ -98,6 +98,7 @@ function getOrCreateSession(callSid) {
   return SESSIONS.get(callSid);
 }
 
+/*
 // Flush function to dump to gsheet
 async function flushAndEnd(reason) {
   try {
@@ -130,7 +131,7 @@ async function flushAndEnd(reason) {
     console.log("[cleanup] closed. reason:", reason || "n/a");
   }
 }
-
+*/
 
 // =====================================================
 
@@ -169,9 +170,49 @@ fastify.register(async (fastify) => {
 
         let streamSid = null;
         let callSid = null;
-        let closed = false;                                                             //added RRM
+        let closed = false;
 
-        const cleanup = () => {                                                         //added RRM
+        // ---- graceful, single-run cleanup + sheet append ----
+        const flushAndEnd = async (reason) => {
+            if (closed) return;
+            closed = true;
+
+            try {
+            if (callSid) {
+                const sess = SESSIONS.get(callSid);
+                if (sess) {
+                const row = [
+                    new Date().toISOString(),
+                    sess.callSid,
+                    sess.name || "",
+                    sess.phone || "",
+                    sess.userTranscript.join(" ").trim(),
+                    sess.agentTranscript.join("").trim()
+                ];
+                await appendToSheet({
+                    sheetId: process.env.GOOGLE_SHEET_ID,
+                    serviceEmail: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+                    privateKey: process.env.GOOGLE_PRIVATE_KEY,
+                    values: [row],
+                });
+                console.log("[sheet] appended row for", callSid);
+                SESSIONS.delete(callSid);
+                }
+            } else {
+                console.warn("[sheet] skip append: no callSid");
+            }
+            } catch (e) {
+            console.error("[sheet] append error:", e?.message || e);
+            } finally {
+            try { if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close(1000, "done"); } catch {}
+            try { connection.close(1000, "done"); } catch {}
+            console.log("[cleanup] closed. reason:", reason || "n/a");
+            }
+        };
+
+        /*
+        // Replaced with above flusnAndEnd
+        const cleanup = () => {
             if (!closed) {
             closed = true;
             console.log('[cleanup] Closing connections...');
@@ -179,6 +220,7 @@ fastify.register(async (fastify) => {
             try { connection.close(); } catch {}
             }
         };
+        */
 
         const sendInitialSessionUpdate = () => {
             const sessionUpdate = {
@@ -197,7 +239,7 @@ fastify.register(async (fastify) => {
             console.log('Sending session update:', JSON.stringify(sessionUpdate));
             openaiWS.send(JSON.stringify(sessionUpdate));
 
-            // Make the AI speak first (like the tutorial)
+            // Make the AI speak first
             const initialConversationItem = {
                 type: 'conversation.item.create',
                 item: {
@@ -294,7 +336,7 @@ fastify.register(async (fastify) => {
                     case "stop":
                         console.log("Incoming stream has stopped");
                         flushAndEnd("twilio stop");
-                        if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close();
+                        //if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close();
                         break;
 
                     default:
@@ -308,8 +350,8 @@ fastify.register(async (fastify) => {
 
         // Handle connection close
         connection.on('close', () => {
-            flushAndEnd("twilio stop");
-            if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close();
+            flushAndEnd("twilio ws stop");
+            //if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close();
             console.log('Client disconnected.');
             cleanup();
         });
