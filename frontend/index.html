@@ -84,6 +84,7 @@
     .kv{display:flex; gap:10px; align-items:flex-start}
     .kv strong{color:#eaf3ff}
     .diagram{width:100%; background:#0f131d; border-radius:12px; border:1px solid var(--border); padding:10px}
+    .logo { font-weight: 900; font-size: 22px; letter-spacing: .5px; margin-bottom: 8px; }
     footer{
       margin:28px 0 10px; font-size:12px; color:#9fb0c7; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;
     }
@@ -107,12 +108,15 @@
           This demo showcases a multilingual, realtime voice agent that nurtures leads and books
           in‑club trial passes — aligned with the vision for the organization's transformation.
           <br>
-          Try it live.
+          Try it now >>>
         </p>
-        <p class="hint">Built with Twilio Voice Media Streams + OpenAI Realtime (μ‑law, server VAD) and deployed on Render.</p>
       </div>
       <div class="cta-card">
         <form id="leadForm" class="form" autocomplete="on">
+          <div class="logo">Crunch Fitness</div>
+            <h2>Get Your Free Trial Pass v12</h2>
+          <p class="muted">Enter your details and our agent will call you shortly.</p>
+        </div>
           <div class="row">
             <div>
               <label for="name">Your name</label>
@@ -218,7 +222,6 @@
 
     <footer>
       <div>© Robert Maleki</div>
-      <div>Privacy: Information collected here is solely for this demo and will not be sold or used for any other purpose.</div>
     </footer>
   </div>
 
