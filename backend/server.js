@@ -98,6 +98,40 @@ function getOrCreateSession(callSid) {
   return SESSIONS.get(callSid);
 }
 
+// Flush function to dump to gsheet
+async function flushAndEnd(reason) {
+  try {
+    if (callSid) {
+      const sess = SESSIONS.get(callSid);
+      if (sess) {
+        const row = [
+          new Date().toISOString(),
+          sess.callSid,
+          sess.name || "",
+          sess.phone || "",
+          sess.userTranscript.join(" ").trim(),
+          sess.agentTranscript.join("").trim()
+        ];
+        await appendToSheet({
+          sheetId: process.env.GOOGLE_SHEET_ID,
+          serviceEmail: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+          privateKey: process.env.GOOGLE_PRIVATE_KEY,
+          values: [row],
+        });
+        console.log("[sheet] appended row for", callSid);
+        SESSIONS.delete(callSid);
+      }
+    }
+  } catch (e) {
+    console.error("[sheet] append error:", e?.message || e);
+  } finally {
+    try { if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close(); } catch {}
+    try { connection.close(); } catch {}
+    console.log("[cleanup] closed. reason:", reason || "n/a");
+  }
+}
+
+
 // =====================================================
 
 // Initialize Fastify
@@ -190,7 +224,7 @@ fastify.register(async (fastify) => {
 
         // Listen for messages from the OpenAI WebSocket (and send to Twilio if necessary)
         openaiWS.on('message', (data) => {
-            let msg; try { msg = JSON.parse(data.toString()); } catch { return; }       // >> ADDED RRM
+            let msg; try { msg = JSON.parse(data.toString()); } catch { return; }
 
             try {
                 const response = JSON.parse(data);
@@ -212,7 +246,7 @@ fastify.register(async (fastify) => {
                     connection.send(JSON.stringify(audioDelta));
                 }
 
-                // >> ADDED RRM
+                // Transcribe user
                 if (msg.type === "conversation.item.created" && msg.item?.role === "user") {
                 const sess = callSid ? getOrCreateSession(callSid) : null;
                 const texts = (msg.item.content || [])
@@ -222,7 +256,7 @@ fastify.register(async (fastify) => {
                 if (sess && texts.length) sess.userTranscript.push(texts.join(" "));
                 }
 
-                // >> ADDED RRM
+                // Transcribe agent
                 if (msg.type === "response.audio_transcript.delta" && msg.delta) {
                     const sess = callSid ? getOrCreateSession(callSid) : null;
                     if (sess) sess.agentTranscript.push(msg.delta);
