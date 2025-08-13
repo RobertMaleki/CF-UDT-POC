@@ -119,6 +119,7 @@ fastify.register(async (fastify) => {
         const openaiWS = new WebSocket(OPENAI_REALTIME_URL, { headers: OPENAI_HEADERS});
 
         let streamSid = null;
+        let callSid = null;
         let closed = false;                                                             //added RRM
 
         const cleanup = () => {                                                         //added RRM
@@ -217,6 +218,7 @@ fastify.register(async (fastify) => {
 
                     case 'start':
                         streamSid = data.start.streamSid;
+                        callSid = data.start?.callSid || callSid;   // Twilio includes CallSid here
                         console.log('Incoming stream has started', streamSid);
                         break;
 
@@ -267,6 +269,10 @@ fastify.post("/api/start-call", async (req, reply) => {
       from: TWILIO_NUMBER,
       url: twimlUrl // Twilio fetches TwiML here -> Connect Stream to our WS
     });
+
+    const sess = getOrCreateSession(call.sid);
+    sess.name = name;
+    sess.phone = phone;
 
     console.log("[start-call] created:", call.sid, "to:", phone);
     reply.send({ ok: true, sid: call.sid });
