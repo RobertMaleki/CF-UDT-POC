@@ -286,6 +286,10 @@ fastify.post("/api/start-call", async (req, reply) => {
       url: twimlUrl // Twilio fetches TwiML here -> Connect Stream to our WS
     });
 
+    const sess = getOrCreateSession(call.sid);
+    sess.name = name;
+    sess.phone = phone;
+
     console.log("[start-call] created:", call.sid, "to:", phone);
     reply.send({ ok: true, sid: call.sid });
   } catch (err) {
