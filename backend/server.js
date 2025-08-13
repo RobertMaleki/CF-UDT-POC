@@ -216,7 +216,7 @@ fastify.register(async (fastify) => {
         });
         */
 
-        openAiWs.on("message", (data) => {
+        openaiWS.on("message", (data) => {
             let msg; try { msg = JSON.parse(data); } catch { return; }
 
             // user transcript (parsed by Realtime)
