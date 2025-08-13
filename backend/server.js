@@ -91,11 +91,20 @@ fastify.register(async (fastify) => {
     // Setup WebSocket server for handling media streams
     fastify.get('/media-stream', { websocket: true }, (connection, req) => {
         console.log("[media] Twilio connected:", req.headers["user-agent"] || "n/a");
-        //>>:RRM replaced with aboveconsole.log('Client connected');
 
         const openaiWS = new WebSocket(OPENAI_REALTIME_URL, { headers: OPENAI_HEADERS});
 
         let streamSid = null;
+        let closed = false;                                                             //added RRM
+
+        const cleanup = () => {                                                         //added RRM
+            if (!closed) {
+            closed = true;
+            console.log('[cleanup] Closing connections...');
+            try { if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close(); } catch {}
+            try { connection.close(); } catch {}
+            }
+        };
 
         const sendInitialSessionUpdate = () => {
             const sessionUpdate = {
@@ -205,15 +214,18 @@ fastify.register(async (fastify) => {
         connection.on('close', () => {
             if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close();
             console.log('Client disconnected.');
+            cleanup();                                                                          // RRM
         });
 
         // Handle WebSocket close and errors
         openaiWS.on('close', () => {
             console.log('Disconnected from the OpenAI Realtime API');
+            cleanup();                                                                          // RRM
         });
 
         openaiWS.on('error', (error) => {
             console.error('Error in the OpenAI WebSocket:', error);
+            cleanup();                                                                          // RRM
         });
     });
 });
