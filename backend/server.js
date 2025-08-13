@@ -189,7 +189,7 @@ fastify.register(async (fastify) => {
         });
 
         // Listen for messages from the OpenAI WebSocket (and send to Twilio if necessary)
-        
+        /*
         openaiWS.on('message', (data) => {
             try {
                 const response = JSON.parse(data);
@@ -214,7 +214,35 @@ fastify.register(async (fastify) => {
                 console.error('Error processing OpenAI message:', error, 'Raw message:', data);
             }
         });
-        
+        */
+
+        openAiWs.on("message", (data) => {
+            let msg; try { msg = JSON.parse(data); } catch { return; }
+
+            // user transcript (parsed by Realtime)
+            if (msg.type === "conversation.item.created" && msg.item?.role === "user") {
+                const sess = callSid ? getOrCreateSession(callSid) : null;
+                const texts = (msg.item.content || [])
+                .filter(p => p.type === "input_text" || p.type === "text") // model may normalize
+                .map(p => p.text)
+                .filter(Boolean);
+                if (sess && texts.length) sess.userTranscript.push(texts.join(" "));
+            }
+
+            // agent (assistant) transcript as it speaks
+            if (msg.type === "response.audio_transcript.delta" && msg.delta) {
+                const sess = callSid ? getOrCreateSession(callSid) : null;
+                if (sess) sess.agentTranscript.push(msg.delta);
+            }
+
+            // existing audio delta passthrough to Twilio...
+            if (msg.type === "response.audio.delta" && msg.audio && streamSid) {
+                const audioDelta = { event: "media", streamSid, media: { payload: msg.audio } };
+                connection.send(JSON.stringify(audioDelta));
+            }
+            });
+
+
         // Handle incoming messages from Twilio
         connection.on('message', (message) => {
             try {
