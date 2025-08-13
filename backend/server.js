@@ -171,6 +171,7 @@ fastify.register(async (fastify) => {
         let streamSid = null;
         let callSid = null;
         let closed = false;
+        let userPartial = ""; // buffer for partial user utterance (per call)
 
         // ---- graceful, single-run cleanup + sheet append ----
         const flushAndEnd = async (reason) => {
@@ -233,6 +234,8 @@ fastify.register(async (fastify) => {
                     instructions: SYSTEM_MESSAGE,
                     modalities: ["text", "audio"],
                     temperature: 0.8,
+
+                    input_audio_transcription: {model: "gpt-4o-mini-transcribe"} // realtime-capable STT model
                 }
             };
 
@@ -288,6 +291,7 @@ fastify.register(async (fastify) => {
                     connection.send(JSON.stringify(audioDelta));
                 }
 
+                /*
                 // Transcribe user
                 if (msg.type === "conversation.item.created" && msg.item?.role === "user") {
                 const sess = callSid ? getOrCreateSession(callSid) : null;
@@ -297,6 +301,47 @@ fastify.register(async (fastify) => {
                 .filter(Boolean);
                 if (sess && texts.length) sess.userTranscript.push(texts.join(" "));
                 }
+                */
+
+                //--
+                // 1) Agent audio back to Twilio (so you hear the assistant)
+                  if (msg.type === 'response.audio.delta' && msg.audio && streamSid) {
+                    connection.send(JSON.stringify({
+                      event: 'media',
+                      streamSid,
+                      media: { payload: msg.audio } // μ-law base64 passthrough
+                    }));
+                  }
+
+                  // 2) USER transcript (incremental)
+                  if (msg.type === "conversation.item.input_audio_transcription.delta" && msg.delta) {
+                    userPartial += msg.delta; // accumulate partial text
+                  }
+
+                  // 3) USER transcript (finalized)
+                  if (msg.type === "conversation.item.input_audio_transcription.completed") {
+                    if (userPartial && callSid) {
+                      const sess = getOrCreateSession(callSid);
+                      sess.userTranscript.push(userPartial.trim());
+                    }
+                    userPartial = ""; // reset buffer
+                  }
+
+                  // 4) USER transcript (fallback path: sometimes emitted as a created user message)
+                  if (msg.type === "conversation.item.created" &&
+                      msg.item?.role === "user" &&
+                      !msg.item?.metadata?.bootstrap) {           // ignore our bootstrap
+                    const texts = (msg.item.content || [])
+                      .filter(p => p.type === "input_text" || p.type === "text")
+                      .map(p => p.text)
+                      .filter(Boolean);
+                    if (texts.length && callSid) {
+                      const sess = getOrCreateSession(callSid);
+                      sess.userTranscript.push(texts.join(" ").trim());
+                    }
+                  }
+
+                //--
 
                 // Transcribe agent
                 if (msg.type === "response.audio_transcript.delta" && msg.delta) {
