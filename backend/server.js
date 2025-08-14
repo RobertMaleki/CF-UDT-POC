@@ -50,7 +50,6 @@ STYLE:
 - Use the caller’s name (“${name}”) occasionally but not every sentence.
 - Confirm details out loud, avoid jargon, and keep energy positive.
 - Multilingual: continue in whatever language the caller uses.
-
 CALL FLOW (follow in order, but adapt as needed):
 1) INTRO: “Hi ${name}, this is **Alice**, an AI assistant with Crunch Fitness.”
 2) AVAILABILITY CHECK: Ask to speak with them and confirm now is a good time to talk.
@@ -62,16 +61,12 @@ CALL FLOW (follow in order, but adapt as needed):
 8) QUESTIONS: Ask if they have any questions; answer briefly and warmly.
 9) RECONFIRM: Reiterate the appointment time and where to check in (front desk).
 10) CLOSE: Thank them warmly and say goodbye.
-
 IF BUSY / CAN'T TALK:
 - Offer to text or call back later; ask for a better time window.
-
 IF NO TRIAL INTEREST:
 - Offer a quick guest pass later in the week, or a tour; stay positive and short.
-
 DATA TO CAPTURE (speak naturally, don’t interrogate):
 - First name (if unclear), preferred day/time window, and any special interest (e.g., classes).
-
 KEEP IT SHORT, CLEAR, AND HELPFUL.`;
 }
 
@@ -147,11 +142,22 @@ fastify.all("/incoming-call", async (req, reply) => {
   const callerName = (req.query && req.query.name) ? String(req.query.name) : "";
   //const wsUrl = base.replace(/^http/, "ws") + "/media-stream";
   const wsUrl = base.replace(/^http/, "ws") + "/media-stream"+(callerName ? `?name=${encodeURIComponent(callerName)}` : "");
+  /*
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say>Please wait while I connect you to a Crunch Fitness expert.</Say>
-  <Connect><Stream url="${wsUrl}" /></Connect>
-</Response>`;
+    <Response>
+      <Say>Please wait while I connect you to a Crunch Fitness expert.</Say>
+      <Connect><Stream url="${wsUrl}" /></Connect>
+    </Response>`;
+  */
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+  <Response>
+    <Say>Please wait while I connect you to a Crunch Fitness expert.</Say>
+    <Connect>
+      <Stream url="${wsUrl}">
+        ${callerName ? `<Parameter name="name" value="${callerName}"/>` : ""}
+      </Stream>
+    </Connect>
+  </Response>`;
   reply.type("text/xml").send(twiml);
 });
 
@@ -162,12 +168,21 @@ fastify.register(async (fastify) => {
         console.log("[media] Twilio connected:", req.headers["user-agent"] || "n/a");
 
         // Read callerName from the upgrade URL query (?name=...)
+        /*
         const callerName = (() => {
           try {
             const u = new URL(req.url, "http://localhost"); // base is ignored, needed for URL()
             return u.searchParams.get("name") || "";
           } catch { return ""; }
         })();
+        */
+       let callerName = (() => {
+          try {
+            const u = new URL(req.url, "http://localhost");
+            return u.searchParams.get("name") || "";
+          } catch { return ""; }
+        })();
+
 
         function sendInitOnceOpen(payloads) {
           const sendAll = () => payloads.forEach(p => openaiWS.send(JSON.stringify(p)));
@@ -220,7 +235,6 @@ fastify.register(async (fastify) => {
             }
         };
 
-        const sess = callSid ? getOrCreateSession(callSid) : null;
         const sendInitialSessionUpdate = () => {
             const sessionUpdate = {
                 type: 'session.update',
@@ -268,7 +282,7 @@ fastify.register(async (fastify) => {
 
         // Listen for messages from the OpenAI WebSocket (and send to Twilio if necessary)
         openaiWS.on('message', (data) => {
-            let msg; //try { msg = JSON.parse(data.toString()); } catch { return; }
+            let msg; try { msg = JSON.parse(data.toString()); } catch { return; }
 
             try {
                 const response = JSON.parse(data);
@@ -359,6 +373,32 @@ fastify.register(async (fastify) => {
                         streamSid = data.start.streamSid;
                         callSid = data.start?.callSid || callSid;   // Twilio includes CallSid here
                         console.log('Incoming stream has started', streamSid);
+
+                          const startName = data.start?.customParameters?.name;
+                            if (startName) {
+                              callerName = String(startName);
+                              console.log('[twilio] custom name from Stream Parameter:', callerName);
+                            } else {
+                              console.log('[twilio] no custom name in start; using URL value:', callerName || '(none)');
+                            }
+                            console.log('Incoming stream has started', streamSid, 'callSid:', callSid);
+
+                            // (Optional) If your initial session.update ran already on 'open' with a blank name,
+                            // refresh the instructions now that we have the callerName:
+                            try {
+                              const refresh = {
+                                type: 'session.update',
+                                session: {
+                                  instructions: getSystemMessage(callerName)
+                                }
+                              };
+                              if (openaiWS.readyState === WebSocket.OPEN) {
+                                openaiWS.send(JSON.stringify(refresh));
+                              }
+                            } catch (e) {
+                              console.warn('[realtime] could not send name refresh:', e?.message || e);
+                            }
+
                         break;
 
                     case "stop":
