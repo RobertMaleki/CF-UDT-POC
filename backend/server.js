@@ -148,7 +148,7 @@ fastify.all("/incoming-call", async (req, reply) => {
   const wsUrl = base.replace(/^http/, "ws") + "/media-stream";
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>We're excited to start this journey of health and fitness with you. Connecting you to a Crunch Fitness expert.</Say>
+  <Say>Please wait while I connect you to a Crunch Fitness expert.</Say>
   <Connect><Stream url="${wsUrl}" /></Connect>
 </Response>`;
   reply.type("text/xml").send(twiml);
