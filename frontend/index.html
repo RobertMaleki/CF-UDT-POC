@@ -206,7 +206,7 @@
         const res = await fetch('/api/start-call', {
           method: 'POST',
           headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ name, phone, preferredLanguage: preferredLanguage.value || null })
+          body: JSON.stringify({ name, phone})
         });
 
         if (!res.ok) {
