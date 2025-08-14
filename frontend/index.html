@@ -33,13 +33,15 @@
         var(--bg);
     }
     a{color:var(--brand)}
-    .wrap{max-width:1100px;margin:0 auto;padding:32px 20px}
-    .hero{
-      display:grid; gap:22px; align-items:center; grid-template-columns: 1.2fr .8fr;
-      padding:20px; border:1px solid var(--border); border-radius:var(--radius);
-      background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.00));
-      box-shadow: var(--shadow);
-    }
+    .wrap{max-width:600px;margin:0 auto;padding:32px 20px}
+.hero{
+  display:grid; gap:22px; align-items:center; grid-template-columns: 1fr; /* was: 1.2fr .8fr */
+  justify-items: center;              /* NEW: center items in the grid */
+  text-align: center;                 /* NEW: center text inside */
+  padding:20px; border:1px solid var(--border); border-radius:var(--radius);
+  background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.00));
+  box-shadow: var(--shadow);
+}
     .hero h1{font-size: clamp(28px, 3vw, 42px); line-height:1.05; margin:0}
     .hero p{margin:0;color:var(--muted);font-size: clamp(14px, 1.6vw, 18px)}
     .cta-card{
@@ -76,22 +78,20 @@
     .hint{font-size:12px; color:#9fb0c7; margin-top:6px}
     .arch{
       margin-top:34px; display:grid; gap:16px;
-      grid-template-columns: 1fr 1fr; align-items:start;
+      align-items:center;
       border:1px solid var(--border); border-radius:var(--radius); padding:18px; background:var(--panel);
     }
     .arch h3{margin:0 0 8px 0}
     .kvs{display:grid; gap:8px}
-    .kv{display:flex; gap:10px; align-items:flex-start}
+    .kv{display:flex; gap:10px; align-items:flex-start; font-size:15px}
     .kv strong{color:#eaf3ff}
-    .diagram{width:100%; background:#0f131d; border-radius:12px; border:1px solid var(--border); padding:10px}
-    footer{
-      margin:28px 0 10px; font-size:12px; color:#9fb0c7; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;
-    }
+    .footer{margin:28px 0 10px; font-size:12px; align-items:center; color:#9fb0c7; display:flex; justify-content:center; gap:10px; flex-wrap:wrap;}
     @media (max-width: 900px){
       .hero{grid-template-columns:1fr}
       .row{grid-template-columns:1fr}
       .arch{grid-template-columns:1fr}
     }
+  .privacy { font-size: 13px; color: var(--muted);}
   </style>
 </head>
 <body>
@@ -101,24 +101,28 @@
     <section class="hero">
       <div>
         <span class="badge">POC • Realtime Voice AI</span>
-        <h1>Crunch Fitness — AI Outbound Call Agent</h1>
+        <span class="badge">Crunch Fitness - Undefeated Tribe</span>
+        <h1>AI Outbound Call Agent</h1>
         <p>
+        <br>
           This demo showcases a multilingual, realtime voice agent that nurtures leads and books
-          in‑club trial passes — aligned with the needs of the role you’re hiring for.
-          Try it live below.
+          in‑club trial passes — a first-of-its-kind in the industry that drives transformational business impact.
+          <br><br>
         </p>
-        <p class="hint">Built with Twilio Voice Media Streams + OpenAI Realtime (μ‑law, server VAD) and deployed on Render.</p>
       </div>
       <div class="cta-card">
         <form id="leadForm" class="form" autocomplete="on">
+          <span class="badge">Demo</span>
+          <h2>Get Your Free Trial Pass</h2>
+          <p class="muted">Enter your details and our agent will call you shortly.</p>
           <div class="row">
             <div>
               <label for="name">Your name</label>
-              <input id="name" name="name" type="text" placeholder="Jane Doe" required />
+              <input id="name" name="name" type="text" placeholder="Alex Johnson" required />
             </div>
             <div>
-              <label for="phone">Mobile (E.164)</label>
-              <input id="phone" name="phone" type="tel" placeholder="+15135551234" required />
+              <label for="phone">Phone Number</label>
+              <input id="phone" name="phone" type="tel" placeholder="5125551234" required />
             </div>
           </div>
 
@@ -127,24 +131,25 @@
 
           <label class="consent">
             <input id="consent" type="checkbox" required />
-            <span>I consent to receive a one‑time demo phone call from this AI agent for evaluation purposes.</span>
+            <span>I consent to receive a demo phone call.</span>
           </label>
 
           <button id="submitBtn" class="btn" type="submit">📞 Start demo call</button>
           <div id="status" class="status" role="status" aria-live="polite"></div>
+          <div class="privacy">Privacy Statement: Information collected here is solely for<br>this demo and will not be sold or used for any other purpose.</div>
         </form>
 
         <div class="bonus">
-          <strong>Bonus: try another language</strong>
+          <strong>💬 Bonus</strong>   The agent is multi-lingual<br>
+          <div class="hint" id="langHint">Answer the phone and speak in any language — the agent will follow.</div>
           <div class="chips" id="langChips">
-            <button class="chip" data-lang="Spanish">Español</button>
-            <button class="chip" data-lang="French">Français</button>
-            <button class="chip" data-lang="Arabic">العربية</button>
-            <button class="chip" data-lang="Mandarin Chinese">中文</button>
-            <button class="chip" data-lang="Hindi">हिन्दी</button>
-            <button class="chip" data-lang="Portuguese">Português</button>
+            <span class="chip" data-lang="Spanish">Español</span> 
+            <span class="chip" data-lang="French">Français</span>
+            <span class="chip" data-lang="Arabic">العربية</span>
+            <span class="chip" data-lang="Mandarin Chinese">中文</span>
+            <span class="chip" data-lang="Hindi">हिन्दी</span>
+            <span class="chip" data-lang="Portuguese">Português</span>
           </div>
-          <div class="hint" id="langHint">Tip: answer the phone and speak in that language — the agent will follow.</div>
         </div>
       </div>
     </section>
@@ -154,69 +159,15 @@
       <div>
         <h3>How it works</h3>
         <div class="kvs">
-          <div class="kv"><span>✅</span><div><strong>Outbound flow:</strong> Form → Fastify backend triggers a Twilio call → TwiML connects a media stream.</div></div>
-          <div class="kv"><span>🎙️</span><div><strong>Realtime voice:</strong> Twilio streams μ‑law audio to OpenAI Realtime; the agent responds with μ‑law audio back to the caller.</div></div>
-          <div class="kv"><span>📝</span><div><strong>Call notes:</strong> User/agent transcripts captured; rows appended to Google Sheets at hang‑up.</div></div>
-          <div class="kv"><span>🌍</span><div><strong>Multilingual:</strong> The model detects & responds in the language you speak — no extra config needed.</div></div>
+          <div class="kv"><span>✅</span><div>Outbound flow: Form → Fastify backend triggers a Twilio call → TwiML connects a media stream.</div></div>
+          <div class="kv"><span>🎙️</span><div>Realtime voice: Twilio streams μ‑law audio to OpenAI Realtime; the agent responds with μ‑law audio back to the caller.</div></div>
+          <div class="kv"><span>🌍</span><div>Multilingual: The model detects & responds in the language you speak — no extra config needed.</div></div>
         </div>
-      </div>
-      <div class="diagram">
-        <!-- Simple inline SVG diagram -->
-        <svg viewBox="0 0 880 300" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg" aria-label="Architecture diagram">
-          <defs>
-            <linearGradient id="g1" x1="0" x2="1">
-              <stop offset="0" stop-color="#34d399"/>
-              <stop offset="1" stop-color="#8b5cf6"/>
-            </linearGradient>
-          </defs>
-          <rect x="0" y="0" width="880" height="300" rx="12" fill="#0b111b" stroke="#242a36"/>
-          <!-- Nodes -->
-          <g font-family="system-ui, sans-serif" font-size="13" fill="#e8ecf1" text-anchor="middle">
-            <rect x="20" y="40" width="170" height="70" rx="10" fill="#1a2030" stroke="#2a3242"/>
-            <text x="105" y="78">Browser Form</text>
-            <text x="105" y="96" fill="#9fb0c7">/api/start-call</text>
-
-            <rect x="210" y="40" width="190" height="70" rx="10" fill="#1a2030" stroke="#2a3242"/>
-            <text x="305" y="70">Fastify (Render)</text>
-            <text x="305" y="88" fill="#9fb0c7">TwiML + WS bridge</text>
-
-            <rect x="420" y="40" width="170" height="70" rx="10" fill="#1a2030" stroke="#2a3242"/>
-            <text x="505" y="70">Twilio Voice</text>
-            <text x="505" y="88" fill="#9fb0c7">Media Streams</text>
-
-            <rect x="610" y="40" width="250" height="70" rx="10" fill="#1a2030" stroke="#2a3242"/>
-            <text x="735" y="70">OpenAI Realtime</text>
-            <text x="735" y="88" fill="#9fb0c7">gpt‑4o‑realtime (μ‑law)</text>
-
-            <rect x="420" y="170" width="170" height="70" rx="10" fill="#1a2030" stroke="#2a3242"/>
-            <text x="505" y="200">Caller</text>
-            <text x="505" y="218" fill="#9fb0c7">Mobile line</text>
-
-            <rect x="210" y="170" width="190" height="70" rx="10" fill="#1a2030" stroke="#2a3242"/>
-            <text x="305" y="200">Google Sheets</text>
-            <text x="305" y="218" fill="#9fb0c7">Transcripts & leads</text>
-          </g>
-
-          <!-- Arrows -->
-          <g stroke="url(#g1)" stroke-width="2" fill="none" marker-end="url(#arrow)">
-            <defs>
-              <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
-                <path d="M0,0 L0,6 L9,3 z" fill="url(#g1)"/>
-              </marker>
-            </defs>
-            <path d="M190,75 L210,75"/>
-            <path d="M400,75 L420,75"/>
-            <path d="M590,75 L610,75"/>
-            <path d="M505,110 L505,170"/>
-            <path d="M305,110 L305,170"/>
-          </g>
-        </svg>
       </div>
     </section>
 
     <footer>
-      <div>© Robert Maleki</div>
-      <div>Privacy: Information collected here is solely for this demo and will not be sold or used for any other purpose.</div>
+      <div class="footer">© Robert Maleki</div>
     </footer>
   </div>
 
@@ -228,15 +179,6 @@
     const preferredLanguage = document.getElementById('preferredLanguage');
     const langChips = document.getElementById('langChips');
     const langHint = document.getElementById('langHint');
-
-    // Language chips: store the selection (optional, informational)
-    langChips.addEventListener('click', (e) => {
-      const chip = e.target.closest('.chip');
-      if (!chip) return;
-      const lang = chip.dataset.lang;
-      preferredLanguage.value = lang;
-      langHint.textContent = `Selected: ${lang}. Answer the phone and speak in ${lang} — the agent will follow.`;
-    });
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
