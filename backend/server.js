@@ -142,7 +142,6 @@ fastify.get("/", async (_req, reply) => {
   reply.type("text/html").send(fs.readFileSync(file, "utf8"));
 });
 
-//>>:RRM ONLY IN CHATGPT Response
 fastify.all("/incoming-call", async (req, reply) => {
   const base = PUBLIC_BASE_URL || (`https://${req.headers.host}`);
   const wsUrl = base.replace(/^http/, "ws") + "/media-stream";
@@ -204,7 +203,7 @@ fastify.register(async (fastify) => {
             console.log("[cleanup] closed. reason:", reason || "n/a");
             }
         };
-        /* ORIGINAL LOCATION OF sessionUpdate block
+
         const sess = callSid ? getOrCreateSession(callSid) : null;
         const sendInitialSessionUpdate = () => {
             const sessionUpdate = {
@@ -214,7 +213,7 @@ fastify.register(async (fastify) => {
                     input_audio_format: 'g711_ulaw',
                     output_audio_format: 'g711_ulaw',
                     voice: VOICE,
-                    instructions: getSystemMessage(sess.name),
+                    instructions: getSystemMessage("Jamie"),
                     modalities: ["text", "audio"],
                     temperature: 0.8,
 
@@ -243,17 +242,17 @@ fastify.register(async (fastify) => {
             openaiWS.send(JSON.stringify(initialConversationItem));
             openaiWS.send(JSON.stringify({ type: 'response.create' }));
         };
-        */
+        
 
         // Open event for OpenAI WebSocket
         openaiWS.on('open', () => {
             console.log('Connected to the OpenAI Realtime API');
-            // HERE setTimeout(sendInitialSessionUpdate, 100); // Ensure connection stability, send after .1 second
+            setTimeout(sendInitialSessionUpdate, 100); // Ensure connection stability, send after .1 second
         });
 
         // Listen for messages from the OpenAI WebSocket (and send to Twilio if necessary)
         openaiWS.on('message', (data) => {
-            let msg; // HERE try { msg = JSON.parse(data.toString()); } catch { return; }
+            let msg; //try { msg = JSON.parse(data.toString()); } catch { return; }
 
             try {
                 const response = JSON.parse(data);
@@ -344,51 +343,6 @@ fastify.register(async (fastify) => {
                         streamSid = data.start.streamSid;
                         callSid = data.start?.callSid || callSid;   // Twilio includes CallSid here
                         console.log('Incoming stream has started', streamSid);
-                        
-                        /* Movedd sessionUpdate block insite case 'start' */
-                        //--
-                        const sess = getOrCreateSession(callSid);
-                        const sendInitialSessionUpdate = () => {
-                            const sessionUpdate = {
-                                type: 'session.update',
-                                session: {
-                                    turn_detection: { type: 'server_vad' },
-                                    input_audio_format: 'g711_ulaw',
-                                    output_audio_format: 'g711_ulaw',
-                                    voice: VOICE,
-                                    instructions: getSystemMessage(sess.name),
-                                    modalities: ["text", "audio"],
-                                    temperature: 0.8,
-
-                                    input_audio_transcription: {model: "gpt-4o-mini-transcribe"} // realtime-capable STT model
-                                }
-                            };
-
-                            console.log('Sending session update:', JSON.stringify(sessionUpdate));
-                            openaiWS.send(JSON.stringify(sessionUpdate));
-                            
-
-                            // Make the AI speak first
-                            const initialConversationItem = {
-                                type: 'conversation.item.create',
-                                item: {
-                                    type: 'message',
-                                    role: 'user',
-                                    content: [
-                                        {
-                                            type: 'input_text',
-                                            text: "Begin the call with the step‑by‑step flow, starting with introducing yourself as Alice and confirming it's a good time to talk."
-                                        }
-                                    ]
-                                }
-                            };
-
-                            // HERE openaiWS.send(JSON.stringify(initialConversationItem));
-                            openaiWS.send(JSON.stringify({ type: 'response.create' }));
-                        };
-                        //--
-                        
-                        sendInitialSessionUpdate();
                         break;
 
                     case "stop":
@@ -409,20 +363,17 @@ fastify.register(async (fastify) => {
         connection.on('close', () => {
             flushAndEnd("twilio ws stop");
             console.log('Client disconnected.');
-
         });
 
         // Handle WebSocket close and errors
         openaiWS.on('close', () => {
             flushAndEnd("twilio stop");
             console.log('Disconnected from the OpenAI Realtime API');
-
         });
 
         openaiWS.on('error', (error) => {
             flushAndEnd("twilio stop");
             console.error('Error in the OpenAI WebSocket:', error);
-
         });
     });
 });
