@@ -38,6 +38,7 @@ const OPENAI_HEADERS = {
 
 // ---- Agent system prompt ----
 const VOICE = 'alloy';
+function toFirstName(s) { return (s || "").trim().split(/\s+/)[0] || ""; }
 function getSystemMessage(callerName) {
   const name = callerName || "there";
   return `
@@ -140,21 +141,14 @@ fastify.get("/", async (_req, reply) => {
 fastify.all("/incoming-call", async (req, reply) => {
   const base = PUBLIC_BASE_URL || (`https://${req.headers.host}`);
   const callerName = (req.query && req.query.name) ? String(req.query.name) : "";
-  //const wsUrl = base.replace(/^http/, "ws") + "/media-stream";
-  const wsUrl = base.replace(/^http/, "ws") + "/media-stream"+(callerName ? `?name=${encodeURIComponent(callerName)}` : "");
-  /*
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-    <Response>
-      <Say>Please wait while I connect you to a Crunch Fitness expert.</Say>
-      <Connect><Stream url="${wsUrl}" /></Connect>
-    </Response>`;
-  */
+  const firstName = toFirstName(callerName);
+  const wsUrl = base.replace(/^http/, "ws") + "/media-stream"+(firstName ? `?name=${encodeURIComponent(firstName)}` : "");
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
   <Response>
     <Say>Please wait while I connect you to a Crunch Fitness expert.</Say>
     <Connect>
       <Stream url="${wsUrl}">
-        ${callerName ? `<Parameter name="name" value="${callerName}"/>` : ""}
+        ${callerName ? `<Parameter name="name" value="${firstName}"/>` : ""}
       </Stream>
     </Connect>
   </Response>`;
@@ -167,19 +161,10 @@ fastify.register(async (fastify) => {
     fastify.get('/media-stream', { websocket: true }, (connection, req) => {
         console.log("[media] Twilio connected:", req.headers["user-agent"] || "n/a");
 
-        // Read callerName from the upgrade URL query (?name=...)
-        /*
-        const callerName = (() => {
-          try {
-            const u = new URL(req.url, "http://localhost"); // base is ignored, needed for URL()
-            return u.searchParams.get("name") || "";
-          } catch { return ""; }
-        })();
-        */
        let callerName = (() => {
           try {
             const u = new URL(req.url, "http://localhost");
-            return u.searchParams.get("name") || "";
+            return toFirstName(u.searchParams.get("name") || "");
           } catch { return ""; }
         })();
 
@@ -375,6 +360,7 @@ fastify.register(async (fastify) => {
                         console.log('Incoming stream has started', streamSid);
 
                           const startName = data.start?.customParameters?.name;
+                          if (startName) callerName = toFirstName(startName);
                             if (startName) {
                               callerName = String(startName);
                               console.log('[twilio] custom name from Stream Parameter:', callerName);
@@ -439,9 +425,8 @@ fastify.post("/api/start-call", async (req, reply) => {
   try {
     const { name, phone } = req.body || {};
     if (!name || !phone) return reply.code(400).send({ error: "Missing name or phone" });
-
-    //const twimlUrl = `${PUBLIC_BASE_URL}/incoming-call`;
-    const twimlUrl = `${PUBLIC_BASE_URL}/incoming-call?name=${encodeURIComponent(name)}`;
+    const first = toFirstName(name);
+    const twimlUrl = `${PUBLIC_BASE_URL}/incoming-call?name=${encodeURIComponent(first)}`;
     const call = await client.calls.create({
       to: phone,
       from: TWILIO_NUMBER,
