@@ -144,7 +144,9 @@ fastify.get("/", async (_req, reply) => {
 
 fastify.all("/incoming-call", async (req, reply) => {
   const base = PUBLIC_BASE_URL || (`https://${req.headers.host}`);
-  const wsUrl = base.replace(/^http/, "ws") + "/media-stream";
+  const callerName = (req.query && req.query.name) ? String(req.query.name) : "";
+  //const wsUrl = base.replace(/^http/, "ws") + "/media-stream";
+  const wsUrl = base.replace(/^http/, "ws") + "/media-stream"+(callerName ? `?name=${encodeURIComponent(callerName)}` : "");
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say>Please wait while I connect you to a Crunch Fitness expert.</Say>
@@ -158,6 +160,20 @@ fastify.register(async (fastify) => {
     // Setup WebSocket server for handling media streams
     fastify.get('/media-stream', { websocket: true }, (connection, req) => {
         console.log("[media] Twilio connected:", req.headers["user-agent"] || "n/a");
+
+        // Read callerName from the upgrade URL query (?name=...)
+        const callerName = (() => {
+          try {
+            const u = new URL(req.url, "http://localhost"); // base is ignored, needed for URL()
+            return u.searchParams.get("name") || "";
+          } catch { return ""; }
+        })();
+
+        function sendInitOnceOpen(payloads) {
+          const sendAll = () => payloads.forEach(p => openaiWS.send(JSON.stringify(p)));
+          if (openaiWS.readyState === WebSocket.OPEN) sendAll();
+          else openaiWS.once('open', sendAll);
+        }
 
         const openaiWS = new WebSocket(OPENAI_REALTIME_URL, { headers: OPENAI_HEADERS});
 
@@ -213,7 +229,7 @@ fastify.register(async (fastify) => {
                     input_audio_format: 'g711_ulaw',
                     output_audio_format: 'g711_ulaw',
                     voice: VOICE,
-                    instructions: getSystemMessage("Jamie"),
+                    instructions: getSystemMessage(getSystemMessage(callerName)),
                     modalities: ["text", "audio"],
                     temperature: 0.8,
 
@@ -384,7 +400,8 @@ fastify.post("/api/start-call", async (req, reply) => {
     const { name, phone } = req.body || {};
     if (!name || !phone) return reply.code(400).send({ error: "Missing name or phone" });
 
-    const twimlUrl = `${PUBLIC_BASE_URL}/incoming-call`;
+    //const twimlUrl = `${PUBLIC_BASE_URL}/incoming-call`;
+    const twimlUrl = `${PUBLIC_BASE_URL}/incoming-call?name=${encodeURIComponent(name)}`;
     const call = await client.calls.create({
       to: phone,
       from: TWILIO_NUMBER,
