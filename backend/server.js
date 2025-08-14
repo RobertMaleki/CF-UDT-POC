@@ -56,11 +56,11 @@ CALL FLOW (follow in order, but adapt as needed):
 2) AVAILABILITY CHECK: Ask to speak with them and confirm now is a good time to talk.
 3) PURPOSE: Confirm you’re calling because they requested a **free trial pass**.
 4) GOALS: Ask about their fitness goals (e.g., strength, weight loss, classes). Encourage briefly and mention how Crunch can help (equipment, classes, coaching).
-5) NEXT STEP: Suggest the best next step is to **come in for a free trial pass**.
-6) SCHEDULING: Ask for availability and offer **two specific options** (e.g., “today 6–8pm” or “tomorrow 7–9am”). If neither works, propose a nearby alternative.
+5) NEXT STEP: Suggest the best next step is to **come in for a free trial pass**, and confirm they are interested
+6) SCHEDULING: Ask for availability and offer **two specific options** (e.g., “today 6–8pm” or “tomorrow 9–11am”). If neither works, propose a nearby alternative.
 7) CONFIRM: Once a time is chosen, **repeat back** the day/time to confirm.
 8) QUESTIONS: Ask if they have any questions; answer briefly and warmly.
-9) RECONFIRM: Reiterate the appointment time and what to bring (ID) and where to check in (front desk).
+9) RECONFIRM: Reiterate the appointment time and where to check in (front desk).
 10) CLOSE: Thank them warmly and say goodbye.
 
 IF BUSY / CAN'T TALK:
@@ -205,8 +205,8 @@ fastify.register(async (fastify) => {
             }
         };
 
+        /*
         const sess = callSid ? getOrCreateSession(callSid) : null;
-
         const sendInitialSessionUpdate = () => {
             const sessionUpdate = {
                 type: 'session.update',
@@ -225,6 +225,7 @@ fastify.register(async (fastify) => {
 
             console.log('Sending session update:', JSON.stringify(sessionUpdate));
             openaiWS.send(JSON.stringify(sessionUpdate));
+            
 
             // Make the AI speak first
             const initialConversationItem = {
@@ -244,6 +245,7 @@ fastify.register(async (fastify) => {
             openaiWS.send(JSON.stringify(initialConversationItem));
             openaiWS.send(JSON.stringify({ type: 'response.create' }));
         };
+        */
 
         // Open event for OpenAI WebSocket
         openaiWS.on('open', () => {
@@ -345,6 +347,52 @@ fastify.register(async (fastify) => {
                         streamSid = data.start.streamSid;
                         callSid = data.start?.callSid || callSid;   // Twilio includes CallSid here
                         console.log('Incoming stream has started', streamSid);
+                        
+                        //--
+                        const sess = getOrCreateSession(callSid);
+                        const sendInitialSessionUpdate = () => {
+                            const sessionUpdate = {
+                                type: 'session.update',
+                                session: {
+                                    turn_detection: { type: 'server_vad' },
+                                    input_audio_format: 'g711_ulaw',
+                                    output_audio_format: 'g711_ulaw',
+                                    voice: VOICE,
+                                    instructions: getSystemMessage(sess.name),
+                                    modalities: ["text", "audio"],
+                                    temperature: 0.8,
+
+                                    input_audio_transcription: {model: "gpt-4o-mini-transcribe"} // realtime-capable STT model
+                                }
+                            };
+
+                            console.log('Sending session update:', JSON.stringify(sessionUpdate));
+                            openaiWS.send(JSON.stringify(sessionUpdate));
+                            
+
+                            // Make the AI speak first
+                            const initialConversationItem = {
+                                type: 'conversation.item.create',
+                                item: {
+                                    type: 'message',
+                                    role: 'user',
+                                    content: [
+                                        {
+                                            type: 'input_text',
+                                            text: "Begin the call with the step‑by‑step flow, starting with introducing yourself as Alice and confirming it's a good time to talk."
+                                        }
+                                    ]
+                                }
+                            };
+
+                            openaiWS.send(JSON.stringify(initialConversationItem));
+                            openaiWS.send(JSON.stringify({ type: 'response.create' }));
+                        };
+
+
+                        //--
+
+
                         break;
 
                     case "stop":
