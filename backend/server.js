@@ -229,7 +229,7 @@ fastify.register(async (fastify) => {
                     input_audio_format: 'g711_ulaw',
                     output_audio_format: 'g711_ulaw',
                     voice: VOICE,
-                    instructions: getSystemMessage(getSystemMessage(callerName)),
+                    instructions: getSystemMessage(callerName),
                     modalities: ["text", "audio"],
                     temperature: 0.8,
 
