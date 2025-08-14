@@ -205,17 +205,7 @@ fastify.register(async (fastify) => {
             }
         };
 
-        /*
-        // Replaced with above flusnAndEnd
-        const cleanup = () => {
-            if (!closed) {
-            closed = true;
-            console.log('[cleanup] Closing connections...');
-            try { if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close(); } catch {}
-            try { connection.close(); } catch {}
-            }
-        };
-        */
+        const sess = callSid ? getOrCreateSession(callSid) : null;
 
         const sendInitialSessionUpdate = () => {
             const sessionUpdate = {
