@@ -205,7 +205,7 @@ fastify.register(async (fastify) => {
             }
         };
 
-        /*
+        
         const sess = callSid ? getOrCreateSession(callSid) : null;
         const sendInitialSessionUpdate = () => {
             const sessionUpdate = {
@@ -245,7 +245,7 @@ fastify.register(async (fastify) => {
             openaiWS.send(JSON.stringify(initialConversationItem));
             openaiWS.send(JSON.stringify({ type: 'response.create' }));
         };
-        */
+        
 
         // Open event for OpenAI WebSocket
         openaiWS.on('open', () => {
@@ -348,6 +348,7 @@ fastify.register(async (fastify) => {
                         callSid = data.start?.callSid || callSid;   // Twilio includes CallSid here
                         console.log('Incoming stream has started', streamSid);
                         
+                        /*
                         //--
                         const sess = getOrCreateSession(callSid);
                         const sendInitialSessionUpdate = () => {
@@ -388,10 +389,8 @@ fastify.register(async (fastify) => {
                             openaiWS.send(JSON.stringify(initialConversationItem));
                             openaiWS.send(JSON.stringify({ type: 'response.create' }));
                         };
-
-
                         //--
-
+                        */
 
                         break;
 
