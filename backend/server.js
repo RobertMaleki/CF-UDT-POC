@@ -204,8 +204,7 @@ fastify.register(async (fastify) => {
             console.log("[cleanup] closed. reason:", reason || "n/a");
             }
         };
-
-        
+        /* ORIGINAL LOCATION OF sessionUpdate block
         const sess = callSid ? getOrCreateSession(callSid) : null;
         const sendInitialSessionUpdate = () => {
             const sessionUpdate = {
@@ -215,7 +214,7 @@ fastify.register(async (fastify) => {
                     input_audio_format: 'g711_ulaw',
                     output_audio_format: 'g711_ulaw',
                     voice: VOICE,
-                    instructions: getSystemMessage("Robert"),
+                    instructions: getSystemMessage(sess.name),
                     modalities: ["text", "audio"],
                     temperature: 0.8,
 
@@ -226,7 +225,6 @@ fastify.register(async (fastify) => {
             console.log('Sending session update:', JSON.stringify(sessionUpdate));
             openaiWS.send(JSON.stringify(sessionUpdate));
             
-
             // Make the AI speak first
             const initialConversationItem = {
                 type: 'conversation.item.create',
@@ -245,17 +243,17 @@ fastify.register(async (fastify) => {
             openaiWS.send(JSON.stringify(initialConversationItem));
             openaiWS.send(JSON.stringify({ type: 'response.create' }));
         };
-        
+        */
 
         // Open event for OpenAI WebSocket
         openaiWS.on('open', () => {
             console.log('Connected to the OpenAI Realtime API');
-            setTimeout(sendInitialSessionUpdate, 100); // Ensure connection stability, send after .1 second
+            // HERE setTimeout(sendInitialSessionUpdate, 100); // Ensure connection stability, send after .1 second
         });
 
         // Listen for messages from the OpenAI WebSocket (and send to Twilio if necessary)
         openaiWS.on('message', (data) => {
-            let msg; try { msg = JSON.parse(data.toString()); } catch { return; }
+            let msg; // HERE try { msg = JSON.parse(data.toString()); } catch { return; }
 
             try {
                 const response = JSON.parse(data);
@@ -278,41 +276,41 @@ fastify.register(async (fastify) => {
                 }
 
                 // 1) Agent audio back to Twilio (so you hear the assistant)
-                  if (msg.type === 'response.audio.delta' && msg.audio && streamSid) {
-                    connection.send(JSON.stringify({
-                      event: 'media',
-                      streamSid,
-                      media: { payload: msg.audio } // μ-law base64 passthrough
-                    }));
-                  }
+                if (msg.type === 'response.audio.delta' && msg.audio && streamSid) {
+                  connection.send(JSON.stringify({
+                    event: 'media',
+                    streamSid,
+                    media: { payload: msg.audio } // μ-law base64 passthrough
+                  }));
+                }
 
-                  // 2) USER transcript (incremental)
-                  if (msg.type === "conversation.item.input_audio_transcription.delta" && msg.delta) {
-                    userPartial += msg.delta; // accumulate partial text
-                  }
+                // 2) USER transcript (incremental)
+                if (msg.type === "conversation.item.input_audio_transcription.delta" && msg.delta) {
+                  userPartial += msg.delta; // accumulate partial text
+                }
 
-                  // 3) USER transcript (finalized)
-                  if (msg.type === "conversation.item.input_audio_transcription.completed") {
-                    if (userPartial && callSid) {
-                      const sess = getOrCreateSession(callSid);
-                      sess.userTranscript.push(userPartial.trim());
-                    }
-                    userPartial = ""; // reset buffer
+                // 3) USER transcript (finalized)
+                if (msg.type === "conversation.item.input_audio_transcription.completed") {
+                  if (userPartial && callSid) {
+                    const sess = getOrCreateSession(callSid);
+                    sess.userTranscript.push(userPartial.trim());
                   }
+                  userPartial = ""; // reset buffer
+                }
 
-                  // 4) USER transcript (fallback path: sometimes emitted as a created user message)
-                  if (msg.type === "conversation.item.created" &&
-                      msg.item?.role === "user" &&
-                      !msg.item?.metadata?.bootstrap) {           // ignore our bootstrap
-                    const texts = (msg.item.content || [])
-                      .filter(p => p.type === "input_text" || p.type === "text")
-                      .map(p => p.text)
-                      .filter(Boolean);
-                    if (texts.length && callSid) {
-                      const sess = getOrCreateSession(callSid);
-                      sess.userTranscript.push(texts.join(" ").trim());
-                    }
+                // 4) USER transcript (fallback path: sometimes emitted as a created user message)
+                if (msg.type === "conversation.item.created" &&
+                    msg.item?.role === "user" &&
+                    !msg.item?.metadata?.bootstrap) {           // ignore our bootstrap
+                  const texts = (msg.item.content || [])
+                    .filter(p => p.type === "input_text" || p.type === "text")
+                    .map(p => p.text)
+                    .filter(Boolean);
+                  if (texts.length && callSid) {
+                    const sess = getOrCreateSession(callSid);
+                    sess.userTranscript.push(texts.join(" ").trim());
                   }
+                }
 
                 // Transcribe agent
                 if (msg.type === "response.audio_transcript.delta" && msg.delta) {
@@ -324,7 +322,6 @@ fastify.register(async (fastify) => {
                 console.error('Error processing OpenAI message:', error, 'Raw message:', data);
             }
         });
-
 
         // Handle incoming messages from Twilio
         connection.on('message', (message) => {
@@ -348,7 +345,7 @@ fastify.register(async (fastify) => {
                         callSid = data.start?.callSid || callSid;   // Twilio includes CallSid here
                         console.log('Incoming stream has started', streamSid);
                         
-                        /*
+                        /* Movedd sessionUpdate block insite case 'start' */
                         //--
                         const sess = getOrCreateSession(callSid);
                         const sendInitialSessionUpdate = () => {
@@ -386,18 +383,17 @@ fastify.register(async (fastify) => {
                                 }
                             };
 
-                            openaiWS.send(JSON.stringify(initialConversationItem));
+                            // HERE openaiWS.send(JSON.stringify(initialConversationItem));
                             openaiWS.send(JSON.stringify({ type: 'response.create' }));
                         };
                         //--
-                        */
-
+                        
+                        sendInitialSessionUpdate();
                         break;
 
                     case "stop":
                         console.log("Incoming stream has stopped");
                         flushAndEnd("twilio stop");
-                        //if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close();
                         break;
 
                     default:
@@ -412,26 +408,24 @@ fastify.register(async (fastify) => {
         // Handle connection close
         connection.on('close', () => {
             flushAndEnd("twilio ws stop");
-            //if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close();
             console.log('Client disconnected.');
-            cleanup();
+
         });
 
         // Handle WebSocket close and errors
         openaiWS.on('close', () => {
             flushAndEnd("twilio stop");
             console.log('Disconnected from the OpenAI Realtime API');
-            cleanup();
+
         });
 
         openaiWS.on('error', (error) => {
             flushAndEnd("twilio stop");
             console.error('Error in the OpenAI WebSocket:', error);
-            cleanup();
+
         });
     });
 });
-
 
 // Outbound call trigger (keeps your existing frontend flow)
 fastify.post("/api/start-call", async (req, reply) => {
@@ -462,5 +456,3 @@ fastify.post("/api/start-call", async (req, reply) => {
 fastify.listen({ port: Number(PORT), host: "0.0.0.0" })
   .then(() => console.log(`Fastify server → http://localhost:${PORT}`))
   .catch((e) => { console.error("Server failed:", e); process.exit(1); });
-
-  //FINAL
