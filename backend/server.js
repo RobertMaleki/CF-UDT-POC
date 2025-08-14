@@ -38,15 +38,44 @@ const OPENAI_HEADERS = {
 
 // ---- Agent system prompt ----
 const VOICE = 'alloy';
-const SYSTEM_MESSAGE = `
-You are a friendly, upbeat Crunch Fitness outbound agent.
-Mission: book a time for the caller to come in and redeem a free trial pass this week.
-- Greet warmly and confirm you're calling from Crunch Fitness about a free trial pass.
-- Ask about their goal (lose weight, strength, classes).
-- Offer two specific visit windows (e.g., "today 6–8pm" or "tomorrow 7–9am").
-- Handle objections concisely and positively.
-- Confirm day/time, repeat back, and close warmly.
-Keep responses under ~10 seconds and avoid long monologues.`;
+function getSystemMessage(callerName) {
+  const name = callerName || "there";
+  return `
+You are **Alice**, a friendly, upbeat AI voice assistant for **Crunch Fitness**.
+Goal: book an in‑club visit for a **free trial pass** and make the caller feel confident and excited.
+
+STYLE:
+- Speak naturally, concise (about 10 seconds per turn), and warmly professional.
+- Listen actively; don’t monologue. Respond to what the caller says.
+- Use the caller’s name (“${name}”) occasionally but not every sentence.
+- Confirm details out loud, avoid jargon, and keep energy positive.
+- Multilingual: continue in whatever language the caller uses.
+
+CALL FLOW (follow in order, but adapt as needed):
+1) INTRO: “Hi ${name}, this is **Alice**, an AI assistant with Crunch Fitness.”
+2) AVAILABILITY CHECK: Ask to speak with them and confirm now is a good time to talk.
+3) PURPOSE: Confirm you’re calling because they requested a **free trial pass**.
+4) GOALS: Ask about their fitness goals (e.g., strength, weight loss, classes). Encourage briefly and mention how Crunch can help (equipment, classes, coaching).
+5) NEXT STEP: Suggest the best next step is to **come in for a free trial pass**.
+6) SCHEDULING: Ask for availability and offer **two specific options** (e.g., “today 6–8pm” or “tomorrow 7–9am”). If neither works, propose a nearby alternative.
+7) CONFIRM: Once a time is chosen, **repeat back** the day/time to confirm.
+8) QUESTIONS: Ask if they have any questions; answer briefly and warmly.
+9) RECONFIRM: Reiterate the appointment time and what to bring (ID) and where to check in (front desk).
+10) CLOSE: Thank them warmly and say goodbye.
+
+IF BUSY / CAN'T TALK:
+- Offer to text or call back later; ask for a better time window.
+
+IF NO TRIAL INTEREST:
+- Offer a quick guest pass later in the week, or a tour; stay positive and short.
+
+DATA TO CAPTURE (speak naturally, don’t interrogate):
+- First name (if unclear), preferred day/time window, and any special interest (e.g., classes).
+
+KEEP IT SHORT, CLEAR, AND HELPFUL.`;
+}
+
+
 
 // List of Event Types to log to the console. See the OpenAI Realtime API Documentation.
 const LOG_EVENT_TYPES = [
@@ -97,41 +126,6 @@ function getOrCreateSession(callSid) {
   }
   return SESSIONS.get(callSid);
 }
-
-/*
-// Flush function to dump to gsheet
-async function flushAndEnd(reason) {
-  try {
-    if (callSid) {
-      const sess = SESSIONS.get(callSid);
-      if (sess) {
-        const row = [
-          new Date().toISOString(),
-          sess.callSid,
-          sess.name || "",
-          sess.phone || "",
-          sess.userTranscript.join(" ").trim(),
-          sess.agentTranscript.join("").trim()
-        ];
-        await appendToSheet({
-          sheetId: process.env.GOOGLE_SHEET_ID,
-          serviceEmail: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-          privateKey: process.env.GOOGLE_PRIVATE_KEY,
-          values: [row],
-        });
-        console.log("[sheet] appended row for", callSid);
-        SESSIONS.delete(callSid);
-      }
-    }
-  } catch (e) {
-    console.error("[sheet] append error:", e?.message || e);
-  } finally {
-    try { if (openaiWS.readyState === WebSocket.OPEN) openaiWS.close(); } catch {}
-    try { connection.close(); } catch {}
-    console.log("[cleanup] closed. reason:", reason || "n/a");
-  }
-}
-*/
 
 // =====================================================
 
@@ -231,7 +225,7 @@ fastify.register(async (fastify) => {
                     input_audio_format: 'g711_ulaw',
                     output_audio_format: 'g711_ulaw',
                     voice: VOICE,
-                    instructions: SYSTEM_MESSAGE,
+                    instructions: getSystemMessage(sess.name),
                     modalities: ["text", "audio"],
                     temperature: 0.8,
 
@@ -251,7 +245,7 @@ fastify.register(async (fastify) => {
                     content: [
                         {
                             type: 'input_text',
-                            text: '"Hello there! I\'m an AI voice assistant from Twilio and the OpenAI Realtime API. How can I help?"'
+                            text: "Begin the call with the step‑by‑step flow, starting with introducing yourself as Alice and confirming it's a good time to talk."
                         }
                     ]
                 }
@@ -291,19 +285,6 @@ fastify.register(async (fastify) => {
                     connection.send(JSON.stringify(audioDelta));
                 }
 
-                /*
-                // Transcribe user
-                if (msg.type === "conversation.item.created" && msg.item?.role === "user") {
-                const sess = callSid ? getOrCreateSession(callSid) : null;
-                const texts = (msg.item.content || [])
-                .filter(p => p.type === "input_text" || p.type === "text")
-                .map(p => p.text)
-                .filter(Boolean);
-                if (sess && texts.length) sess.userTranscript.push(texts.join(" "));
-                }
-                */
-
-                //--
                 // 1) Agent audio back to Twilio (so you hear the assistant)
                   if (msg.type === 'response.audio.delta' && msg.audio && streamSid) {
                     connection.send(JSON.stringify({
@@ -340,8 +321,6 @@ fastify.register(async (fastify) => {
                       sess.userTranscript.push(texts.join(" ").trim());
                     }
                   }
-
-                //--
 
                 // Transcribe agent
                 if (msg.type === "response.audio_transcript.delta" && msg.delta) {
